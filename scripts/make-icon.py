@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+# Usage: scripts/make-icon.py webos [logo.png]   (needs Pillow: pip install pillow)
+"""Draws the Sonic 3 A.I.R. for webOS app icon as original pixel art: a floating
+jungle island with a waterfall over a sunlit sea, under a banded 16-bit sky,
+with a red ribbon across the sea carrying the name ("SONIC 3" over "A.I.R.") so
+the app is easy to spot in the webOS app list. No characters, logos or game
+artwork are used; the letters are font8x8 (public domain, the same font the app
+draws its own text with, read from src/port/BitmapFont.cpp). The scene is
+rendered on a cell grid and upscaled 2x with nearest-neighbour; the ribbon and
+letters are drawn at the final size, so they stay crisp on the TV.
+After SonicWebMania's make-icon.py (the ribbon and the lettering)."""
+import math, os, re, sys
+from PIL import Image
+
+SKY = [(36, 52, 150), (52, 92, 200), (78, 140, 232), (120, 186, 250), (186, 222, 255)]
+SEA = [(40, 120, 200), (28, 96, 176), (20, 74, 150)]
+SEA_SPARKLE = (220, 245, 255)
+JUNGLE, JUNGLE_DARK, JUNGLE_LIGHT = (40, 170, 60), (22, 112, 44), (110, 214, 82)
+ROCK, ROCK_DARK, ROCK_LIGHT = (150, 92, 48), (98, 56, 30), (196, 132, 70)
+WATER, WATER_LIGHT = (150, 214, 255), (240, 250, 255)
+TRUNK = (120, 72, 36)
+CLOUD = (245, 250, 255)
+SUN, SUN_GLOW = (255, 244, 170), (255, 222, 120)
+
+HORIZON = 0.60     # Where the sea starts.
+ISLAND_Y = 0.30    # The island's flat top.
+RIBBON_TOP = 0.635 # Top of the name ribbon, on the sea.
+
+
+def pixel(u, v):
+    """Colour at normalised position (u, v) in [0,1), or None for transparent."""
+    # Rounded-square icon mask.
+    r = 0.18
+    cx = min(max(u, r), 1 - r); cy = min(max(v, r), 1 - r)
+    if (u - cx) ** 2 + (v - cy) ** 2 > r * r:
+        return None
+
+    # Palm tree on the island: fronds, then the leaning trunk.
+    px, py = 0.38, ISLAND_Y - 0.15
+    for angle in (-2.6, -2.0, -1.2, -0.5, 0.2):
+        for t in range(1, 9):
+            fx = px + math.cos(angle) * 0.017 * t
+            fy = py + math.sin(angle) * 0.017 * t + 0.0016 * t * t
+            if (u - fx) ** 2 + (v - fy) ** 2 < 0.018 ** 2:
+                return JUNGLE_DARK if t > 6 else JUNGLE
+    if ISLAND_Y - 0.15 <= v <= ISLAND_Y and abs(u - (px + (ISLAND_Y - v) * -0.25)) < 0.014:
+        return TRUNK
+
+    # Floating island: jungle canopy on top, a rocky body narrowing below.
+    ix, half = 0.52, 0.30
+    if ISLAND_Y - 0.04 <= v < ISLAND_Y + 0.025 and abs(u - ix) < half:
+        bump = 0.02 * math.sin(u * 40.0)
+        if v >= ISLAND_Y - 0.03 + bump:
+            return JUNGLE_LIGHT if v < ISLAND_Y - 0.015 + bump else JUNGLE
+    depth = (v - ISLAND_Y - 0.025) / 0.24
+    if 0 <= depth < 1:
+        width = half * (1 - depth) ** 1.3
+        if abs(u - ix) < width:
+            # Waterfall pouring off the right side of the island.
+            if 0.66 < u < 0.70:
+                return WATER_LIGHT if int(v * 90) % 3 == 0 else WATER
+            band = int(depth * 6)
+            shade = ROCK_LIGHT if u - ix < -width * 0.55 else ROCK_DARK if u - ix > width * 0.45 else ROCK
+            return ROCK_DARK if band % 2 and abs(u - ix) > width * 0.8 else shade
+    # The waterfall keeps falling below the island to the sea.
+    if ISLAND_Y + 0.025 <= v < HORIZON and 0.66 < u < 0.70:
+        return WATER_LIGHT if int(v * 90) % 3 == 0 else WATER
+
+    # Sea: bands, with sparkles under the sun.
+    if v >= HORIZON:
+        band = min(len(SEA) - 1, int((v - HORIZON) / (1 - HORIZON) * len(SEA)))
+        if abs(u - 0.18) < 0.10 and int(v * 60) % 2 == 0 and int(u * 50 + v * 30) % 4 == 0:
+            return SEA_SPARKLE
+        return SEA[band]
+
+    # Sun.
+    d = math.hypot(u - 0.18, v - 0.16)
+    if d < 0.07:
+        return SUN
+    if d < 0.09:
+        return SUN_GLOW
+
+    # Clouds.
+    for (cx2, cy2, rad) in [(0.74, 0.12, 0.06), (0.82, 0.10, 0.055), (0.89, 0.13, 0.045), (0.12, 0.45, 0.05), (0.19, 0.47, 0.04)]:
+        if (u - cx2) ** 2 + ((v - cy2) * 1.6) ** 2 < rad * rad:
+            return CLOUD
+
+    # Banded sky.
+    return SKY[min(len(SKY) - 1, int(v / HORIZON * len(SKY)))]
+
+# ---- The name ribbon ----------------------------------------------------------
+
+RIBBON = (206, 32, 44)
+RIBBON_LIGHT = (240, 78, 76)
+RIBBON_DARK = (130, 14, 30)
+RIBBON_FOLD = (96, 8, 22)
+TITLE_FILL = [(255, 236, 92), (255, 206, 40), (248, 150, 24)]  # top to bottom
+SUBTITLE_FILL = (255, 255, 255)
+OUTLINE = (24, 14, 50)
+
+
+def load_font():
+    """Glyphs of font8x8 from the app's BitmapFont.cpp: {char: 8 row bytes, bit 0 = leftmost}."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    source = open(os.path.join(root, "src", "port", "BitmapFont.cpp"), encoding="utf-8").read()
+    rows = re.findall(r"\{ (0x[0-9A-F]{2}(?:, 0x[0-9A-F]{2}){7}) \}", source)
+    return {chr(0x20 + i): [int(v, 16) for v in row.split(", ")] for i, row in enumerate(rows)}
+
+
+FONT = load_font()
+
+
+def text_mask(text, scale, bold):
+    """
+    Set of (x, y) pixels of @text at @scale (bold: each glyph pixel also one to
+    the right). Letters are spaced by their drawn width, not the font's fixed
+    8-pixel cell, so narrow letters (I) and wide ones (M) get the same gap.
+    """
+    pixels = set()
+    gap = scale  # One font pixel between letters.
+    pen = 0
+    for ch in text:
+        columns = [gx for bits in FONT[ch] for gx in range(8) if bits >> gx & 1]
+        if not columns:  # A space: a gap three font pixels wide.
+            pen += 3 * scale
+            continue
+        first, last = min(columns), max(columns)
+        for gy, bits in enumerate(FONT[ch]):
+            for gx in range(first, last + 1):
+                if bits >> gx & 1:
+                    for sy in range(scale):
+                        for sx in range(scale + (1 if bold else 0)):
+                            pixels.add((pen + (gx - first) * scale + sx, gy * scale + sy))
+        pen += (last - first + 1) * scale + (1 if bold else 0) + gap
+    return pixels
+
+
+def bounds(mask):
+    xs = [x for x, _ in mask]; ys = [y for _, y in mask]
+    return min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+
+
+def draw_text(img, mask, left, top, fill):
+    """Draws @mask at (left, top) with a 1-pixel outline; @fill is a colour or a top-to-bottom list."""
+    x0, y0, w, h = bounds(mask)
+    outline = {(x + dx, y + dy) for x, y in mask for dx in (-1, 0, 1) for dy in (-1, 0, 1)} - mask
+    for x, y in outline:
+        img.putpixel((left + x - x0, top + y - y0), OUTLINE + (255,))
+    for x, y in mask:
+        colour = fill[min(len(fill) - 1, (y - y0) * len(fill) // h)] if isinstance(fill, list) else fill
+        img.putpixel((left + x - x0, top + y - y0), colour + (255,))
+
+
+def draw_ribbon(img, top, height):
+    """A banner across the icon: lit top edge, shaded bottom edge, folded ends that hang lower."""
+    size = img.width
+    fold_w, drop = max(4, size // 12), max(2, height // 5)
+    for y in range(top, top + height + drop):
+        for x in range(size):
+            if img.getpixel((x, y))[3] == 0:
+                continue  # Outside the rounded icon.
+            in_band = top <= y < top + height and fold_w <= x < size - fold_w
+            in_fold = (x < fold_w or x >= size - fold_w) and top + drop <= y < top + height + drop
+            if in_band:
+                rel = y - top
+                colour = RIBBON_LIGHT if rel < max(1, height // 10) else RIBBON_DARK if rel >= height - max(1, height // 8) else RIBBON
+            elif in_fold:
+                # The folded-back ends, darker, with a notch cut into the outer edge.
+                mid = top + drop + height // 2
+                notch = (x < fold_w and x < abs(y - mid) * fold_w // (height // 2 + 1) - fold_w // 2 + 2) or \
+                        (x >= size - fold_w and size - 1 - x < abs(y - mid) * fold_w // (height // 2 + 1) - fold_w // 2 + 2)
+                if notch:
+                    continue
+                colour = RIBBON_FOLD
+            else:
+                continue
+            img.putpixel((x, y), colour + (255,))
+
+
+def add_name(img, title_scale, subtitle_scale):
+    """The ribbon with "SONIC 3" over "A.I.R.", centred horizontally on the lower part of the icon."""
+    size = img.width
+    # Bold from 2x up: at 1x the extra column would close the gap between letters.
+    title    = text_mask("SONIC 3", title_scale, title_scale >= 2)
+    subtitle = text_mask("A.I.R.", subtitle_scale, subtitle_scale >= 2)
+    _, _, tw, th = bounds(title)
+    _, _, sw, sh = bounds(subtitle)
+    gap = max(1, title_scale)
+    pad = max(2, title_scale + 1)
+    height = th + gap + sh + 2 * pad
+    top = int(size * RIBBON_TOP)
+    draw_ribbon(img, top, height)
+    draw_text(img, title, (size - tw) // 2, top + pad, TITLE_FILL)
+    draw_text(img, subtitle, (size - sw) // 2, top + pad + th + gap, SUBTITLE_FILL)
+
+
+def render(cells, scale, title_scale, subtitle_scale, path):
+    img = Image.new("RGBA", (cells, cells), (0, 0, 0, 0))
+    for y in range(cells):
+        for x in range(cells):
+            c = pixel((x + 0.5) / cells, (y + 0.5) / cells)
+            if c is not None:
+                img.putpixel((x, y), c + (255,))
+    img = img.resize((cells * scale, cells * scale), Image.NEAREST)
+    add_name(img, title_scale, subtitle_scale)
+    img.save(path)
+
+
+out = sys.argv[1]
+render(40, 2, 1, 1, f"{out}/icon.png")         # 80x80
+render(65, 2, 2, 1, f"{out}/largeIcon.png")    # 130x130
+if len(sys.argv) > 2:
+    render(128, 2, 4, 2, sys.argv[2])          # 256x256, the README logo
+

@@ -1,0 +1,53 @@
+{
+	// Sonic 3 A.I.R. for webOS: the game profile.
+	//
+	// The official release has no oxygenproject.json: the game fills in the same
+	// profile itself (ConfigurationImpl::fillDefaultGameProfile and
+	// EngineDelegate::setupCustomGameProfile) and loads its scripts precompiled,
+	// from data/scripts.bin. This port ships the scripts as source instead
+	// (cmake/StageGameData.cmake), which the game only compiles when a profile
+	// names the main script: this file is that profile, with the release's values.
+	// The game compiles the scripts at the first start and keeps the result in
+	// saves/scripts.bin, so later starts are quick.
+
+	// Metadata
+	"Identifier": "S3AIR",
+	"ShortName":  "Sonic 3 A.I.R.",
+	"FullName":   "Sonic 3 - Angel Island Revisited",
+
+	// ROM
+	"RomCheck":   "size=0x400000, checksum=0x344983ffcfeff8cb",
+	"RomInfos":
+	{
+		"S3K_Steam":
+		{
+			"SteamGameName":  "Sonic 3 & Knuckles",
+			"SteamRomName":   "Sonic_Knuckles_wSonic3.bin",
+			"Overwrites":     "0x2001f0:0x4a"
+		}
+	},
+
+	// Paths
+	"GameDataPath": "data",
+
+	// Scripts
+	"Scripts":
+	{
+		"MainScriptName": "main.lemon"
+	},
+
+	// Data packages (data/ holds the same files unpacked; the remastered
+	// soundtrack package comes from the app data folder)
+	"DataPackages":
+	{
+		"enginedata.bin":    { "Required": false },
+		"gamedata.bin":      { "Required": false },
+		"audiodata.bin":     { "Required": false },
+		"audioremaster.bin": { "Required": false }
+	},
+
+	"Emulation":
+	{
+		"AsmStackRange": "0xfd00 - 0xfe00"
+	}
+}

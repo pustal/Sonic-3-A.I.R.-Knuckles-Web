@@ -1,0 +1,31 @@
+{
+	// Sonic 3 A.I.R. for webOS: the game's config.json, installed with the app
+	// (based on the official release's). The game's options are saved in
+	// settings.json in the app data folder and can be changed in its Options menu.
+	//
+	// NOTE (from the official config.json):
+	//  Some properties here in config.json are also stored in settings.json in the save data directory.
+	//  On desktop platforms (which includes this port), config.json is preferred: if a property is set
+	//  here, the value in settings.json is not used.
+
+	// Window size (the TV always shows the game full screen)
+	"WindowSize": "1280 x 720",
+
+	// Platform override ("1": desktop, "2": mobile, "-1": auto-selection)
+	"PlatformFlags": "-1",
+
+	// Dev mode
+	"DevMode":
+	{
+		"EnforceDebugMode": "0",
+		"SkipExitConfirmation": "0"
+	},
+
+	// Game recorder
+	"GameRecording":
+	{
+		"EnablePlayback": "0",
+		"PlaybackStartFrame": "0",
+		"PlaybackIgnoreKeys": "0"
+	}
+}

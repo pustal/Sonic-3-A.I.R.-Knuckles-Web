@@ -1,0 +1,15 @@
+{
+    "id": "@S3W_APP_ID@",
+    "version": "@PROJECT_VERSION@",
+    "vendor": "Sonic 3 A.I.R. webOS port",
+    "type": "native",
+    "main": "Sonic3AIR",
+    "title": "Sonic 3 A.I.R.",
+    "icon": "icon.png",
+    "largeIcon": "largeIcon.png",
+    "iconColor": "#2c4cc8",
+    "appDescription": "Sonic 3 - Angel Island Revisited for webOS. Bring your own Sonic 3 & Knuckles ROM.",
+    "supportTouchMode": "none",
+    "useAllMouseButtons": false,
+    "requiredACG": []
+}
