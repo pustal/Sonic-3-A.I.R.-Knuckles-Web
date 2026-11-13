@@ -6,6 +6,7 @@
 
 #include "BitmapFont.h"
 #include "NetInfo.h"
+#include "RemoteInput.h"
 #include "SdlHooks.h"
 #include "Storage.h"
 #include "TransferServer.h"
@@ -27,7 +28,7 @@ constexpr int kCanvasHeight = 270;
 constexpr int kLine         = 12;
 constexpr std::uint32_t kInfoRefreshMs = 3000;
 constexpr std::uint32_t kStartDelayMs  = 1200;
-/** USB drives are checked for a ROM this often (a drive may be plugged in meanwhile). */
+/** The USB drives are checked this often for one plugged in meanwhile. */
 constexpr std::uint32_t kUsbRefreshMs = 3000;
 constexpr std::uint32_t kFrameDelayMs  = 33;
 
@@ -50,6 +51,7 @@ struct ScreenState {
     std::uint64_t freeBytes = 0;
     std::vector<std::string> usbLines;
     TransferStatus transfer;
+    bool searching = false; ///< A RetroArch folder search is running.
     bool starting = false;
 };
 
@@ -87,7 +89,7 @@ bool IsExitRequest(const SDL_Event &event)
 }
 
 void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenState &state, const UsbAccess &usb,
-                const TransferServer *server)
+                const TransferServer *server, SetupReason reason)
 {
     SDL_SetRenderDrawColor(renderer, kBackground.r, kBackground.g, kBackground.b, kBackground.a);
     SDL_RenderClear(renderer);
@@ -98,16 +100,33 @@ void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenSt
     y += 26;
 
     if (state.starting) {
-        text.DrawTextCentered(center, kCanvasHeight / 2, "ROM installed. Starting...", 1, kText);
+        text.DrawTextCentered(center, kCanvasHeight / 2,
+                              reason == SetupReason::AfterCrash ? "Starting..." : "ROM installed. Starting...", 1, kText);
+        SDL_RenderPresent(renderer);
+        return;
+    }
+
+    if (reason == SetupReason::AfterCrash) {
+        text.DrawTextCentered(center, y, "The game closed unexpectedly last time.", 1, kWarning);
+        y += kLine;
+        text.DrawTextCentered(center, y, "Its logs are on the transfer page, under Trouble?:", 1, kText);
+        y += kLine * 2;
+        if (server && server->Port() != 0 && !state.address.empty()) {
+            text.DrawTextCentered(center, y, "http://" + state.address + ":" + std::to_string(server->Port()), 2, kAccent);
+            y += 22;
+            text.DrawTextCentered(center, y, "PIN  " + server->Pin(), 2, kTitle);
+            y += 30;
+        }
+        text.DrawTextCentered(center, y, "Press OK to start the game, BACK to exit.", 1, kText);
         SDL_RenderPresent(renderer);
         return;
     }
 
     text.DrawTextCentered(center, y, "The Sonic 3 & Knuckles ROM is needed to play.", 1, kText);
     y += kLine;
-    text.DrawTextCentered(center, y, "Use your own copy: Sonic_Knuckles_wSonic3.bin (4 MB),", 1, kDim);
+    text.DrawTextCentered(center, y, "Use your own copy: the 4 MB locked-on ROM, .bin or .md,", 1, kDim);
     y += kLine;
-    text.DrawTextCentered(center, y, "from the Steam or Mega Drive Classics release.", 1, kDim);
+    text.DrawTextCentered(center, y, "as the Steam and Mega Drive Classics releases include it.", 1, kDim);
     y += kLine * 2;
 
     if (!server || server->Port() == 0) {
@@ -129,7 +148,13 @@ void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenSt
         y += 26;
     }
 
-    text.DrawTextCentered(center, y, "Or put it on a USB drive, in a folder named \"Sonic 3 AIR\".", 1, kDim);
+    text.DrawTextCentered(center, y, "Or plug in a USB drive with it in a \"Sonic 3 AIR\" folder,", 1, kDim);
+    y += kLine;
+    text.DrawTextCentered(center, y, "or in RetroArch's roms/megadrive or roms/genesis folder.", 1, kDim);
+    if (state.searching) {
+        y += kLine;
+        text.DrawTextCentered(center, y, "Looking in the USB drives' RetroArch folders...", 1, kAccent);
+    }
     y += kLine + 4;
     text.DrawTextCentered(center, y, "Free space on the TV: " + HumanBytes(state.freeBytes), 1, kDim);
     y += kLine;
@@ -161,7 +186,7 @@ void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenSt
 
 } // namespace
 
-SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const TransferServer *server)
+SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const TransferServer *server, SetupReason reason)
 {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0)
         return SetupResult::Failed;
@@ -189,6 +214,7 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
     std::uint32_t nextInfoRefresh = 0;
     std::uint32_t startAt         = 0;
     std::uint32_t nextUsbCheck    = 0;
+    std::string knownDrives       = usb.MountSignature(); // main.cpp has looked at these already
     SetupResult result            = SetupResult::Exit;
     bool running                  = true;
 
@@ -199,6 +225,10 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
                 SDL_GameControllerOpen(event.cdevice.which);
             else if (IsExitRequest(event))
                 running = false;
+            else if (reason == SetupReason::AfterCrash && !state.starting && RemoteInput::ToMenuAction(event) == MenuAction::Confirm) {
+                state.starting = true;
+                startAt        = SDL_GetTicks() + kStartDelayMs;
+            }
         }
 
         const std::uint32_t now = SDL_GetTicks();
@@ -210,14 +240,22 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
         }
         if (server)
             state.transfer = server->Snapshot();
+        state.searching = usb.RetroArchSearchRunning();
 
-        // A drive plugged in with a ROM on it: link it in (an upload links its own).
+        // A drive plugged in meanwhile: look for the ROM on it (an upload places its own).
+        // Only when the drives change, as searching RetroArch folders can take a while.
         if (!state.starting && SDL_TICKS_PASSED(now, nextUsbCheck)) {
-            if (!Storage::IsPlainFile(storage.RomPath()) && Storage::FileSize(storage.RomPath()) == 0)
-                usb.PlaceContent(storage);
+            const std::string drives = usb.MountSignature();
+            if (drives != knownDrives) {
+                knownDrives = drives;
+                if (Storage::FileSize(storage.RomPath()) == 0) {
+                    usb.PlaceContent(storage);
+                    usb.StartRetroArchSearch(storage);
+                }
+            }
             nextUsbCheck = now + kUsbRefreshMs;
         }
-        if (!state.starting && Storage::FileSize(storage.RomPath()) == Storage::kRomBytes) {
+        if (reason == SetupReason::MissingRom && !state.starting && Storage::FileSize(storage.RomPath()) == Storage::kRomBytes) {
             state.starting = true;
             startAt        = now + kStartDelayMs;
         }
@@ -226,7 +264,7 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
             running = false;
         }
 
-        DrawScreen(renderer, text, state, usb, server);
+        DrawScreen(renderer, text, state, usb, server, reason);
         SDL_Delay(kFrameDelayMs);
     }
 

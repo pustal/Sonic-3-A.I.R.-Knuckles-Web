@@ -96,6 +96,15 @@ public:
     /** Where a save backup received while the game runs waits for the next launch. */
     std::string IncomingDir() const { return PathFor("incoming"); }
 
+    /** The port's log (port-log.txt), or the last launch's (port-log-previous.txt) when @p previous. */
+    std::string PortLogPath(bool previous) const { return PathFor(previous ? "port-log-previous.txt" : "port-log.txt"); }
+
+    /** The game's log (Sonic3AIR/logfile.txt), or the last launch's (logfile-previous.txt) when @p previous. */
+    std::string GameLogPath(bool previous) const { return AppDataDir() + (previous ? "/logfile-previous.txt" : "/logfile.txt"); }
+
+    /** A file that exists while the game runs: still there at a launch means the last one crashed. */
+    std::string GameRunningMarkerPath() const { return PathFor("game-running"); }
+
     /** Where a save backup received while the game runs is kept until the next launch. */
     std::string PendingBackupPath() const;
 
@@ -118,6 +127,20 @@ public:
      * own copy).
      */
     static bool IsValidRom(const std::string &path);
+
+    /** IsValidRom() for a ROM already in memory (patched on a copy; @p rom is not changed). */
+    static bool IsValidRomData(const std::vector<unsigned char> &rom);
+
+    /**
+     * Whether @p name has an extension Mega Drive ROMs are dumped with and
+     * A.I.R. can read: .bin or .md (or .gen), any case. These are all plain
+     * ROM images; A.I.R. ignores the name and checks the content. The
+     * interleaved .smd format is not accepted.
+     */
+    static bool IsRomFileName(const std::string &name);
+
+    /** Half of the locked-on ROM: Sonic & Knuckles and Sonic 3 are 2 MB each. */
+    static constexpr std::uint64_t kHalfRomBytes = kRomBytes / 2;
 
     /** Whether the file at @p path is an Oxygen engine package of the version this game reads. */
     static bool IsSoundtrackPackage(const std::string &path);

@@ -82,6 +82,9 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-Wno-unused-function -Wno-stringop-overflow -Wno-psabi)
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# Unwind tables everywhere, so the crash handler (src/port/Log.cpp) can list
+# the calls that led to a crash on the TV's 32-bit ARM too.
+add_compile_options(-funwind-tables)
 # The game's own code is upstream's; its warnings are not ours to fix.
 set(AIR_COMPILE_OPTIONS -w)
 
@@ -215,6 +218,7 @@ set(S3W_PORT_SOURCES
     src/port/BitmapFont.cpp
     src/port/CurlShim.cpp
     src/port/GameFolder.cpp
+    src/port/Log.cpp
     src/port/MenuOverlay.cpp
     src/port/NetInfo.cpp
     src/port/RemoteInput.cpp
@@ -249,7 +253,9 @@ target_link_options(Sonic3AIR PRIVATE
     -Wl,--wrap=SDL_PollEvent
     -Wl,--wrap=SDL_GL_SwapWindow
     -Wl,--wrap=SDL_OpenAudioDevice
-    -Wl,--wrap=SDL_CreateWindow)
+    -Wl,--wrap=SDL_CreateWindow
+    -Wl,--wrap=SDL_ShowMessageBox
+    -Wl,--wrap=SDL_ShowSimpleMessageBox)
 
 if(S3W_TARGET_WEBOS)
     # The TV's C++ runtime is older than the toolchain's; carry our own.

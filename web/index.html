@@ -79,14 +79,17 @@
     <section>
       <h2>ROM</h2>
       <p id="rom-line"></p>
-      <p class="dim">Sonic 3 A.I.R. needs your own copy of <b>Sonic 3 &amp; Knuckles</b>: the file <code>Sonic_Knuckles_wSonic3.bin</code> (4&nbsp;MB)
-        that comes with Sonic 3 &amp; Knuckles on Steam or the Sega Mega Drive &amp; Genesis Classics.
-        It can stay on a USB drive, in a folder named <code id="rom-folder">Sonic 3 AIR</code>; a copy kept on the TV is used first, so only one copy is kept.</p>
+      <p class="dim">Sonic 3 A.I.R. needs your own copy of <b>Sonic 3 &amp; Knuckles</b>: the 4&nbsp;MB ROM of Sonic &amp; Knuckles
+        locked on to Sonic 3, as a <code>.bin</code> or <code>.md</code> file with any name (Steam and the Sega Mega Drive &amp; Genesis
+        Classics include it as <code>Sonic_Knuckles_wSonic3.bin</code>). The TV checks it is that exact ROM.
+        It can stay on a USB drive, in a folder named <code id="rom-folder">Sonic 3 AIR</code>; a copy kept on the TV is used first, so only one copy is kept.
+        A ROM with "sonic" in its name in RetroArch's <code>roms/megadrive</code> or <code>roms/genesis</code> folder on a USB drive is
+        found and copied to the TV by itself, including Sonic &amp; Knuckles and Sonic 3 as two 2&nbsp;MB files.</p>
       <div class="row">
         <label for="rom-target">Upload to</label>
         <select id="rom-target"></select>
         <label class="button" for="rom-file">Choose ROM</label>
-        <input id="rom-file" type="file" accept=".bin">
+        <input id="rom-file" type="file" accept=".bin,.md,.gen">
       </div>
       <div id="rom-move-row" class="row hidden">
         <label for="rom-move-target">Move it to</label>
@@ -154,8 +157,13 @@
 
     <section>
       <h2>Trouble?</h2>
-      <p class="dim">The game's log helps when reporting a problem:
-        <a id="log-link" href="#" target="_blank" rel="noopener">open the log</a>.</p>
+      <p id="crash-line" class="warn hidden">The game closed unexpectedly at the last launch: its logs are the "last launch" ones below.
+        On the TV, press OK to start the game again.</p>
+      <p class="dim">The logs help when reporting a problem.
+        This launch: <a id="log-link" href="#" target="_blank" rel="noopener">the game's log</a>,
+        <a id="portlog-link" href="#" target="_blank" rel="noopener">the app's start-up log</a>.
+        Last launch: <a id="log-previous-link" href="#" target="_blank" rel="noopener">the game's log</a>,
+        <a id="portlog-previous-link" href="#" target="_blank" rel="noopener">the app's start-up log</a>.</p>
     </section>
   </div>
 
@@ -172,14 +180,14 @@
 
 /**
  * @typedef {{ present: boolean, location: 'none'|'internal'|'usb', drive: string, size: number,
- *             source: 'none'|'internal'|'usb'|'usb-mount', file: string }} StoredFile
+ *             source: 'none'|'internal'|'usb'|'usb-mount', file: string, importedFrom: string }} StoredFile
  * @typedef {{ name: string, size: number, folder: boolean, active: boolean }} Mod
  * @typedef {{ mount: string, label: string, spaceKnown: boolean, freeBytes: number, totalBytes: number,
  *             readable: boolean, writable: boolean, romBytes: number, soundtrackBytes: number,
  *             modsFolder: boolean, mods: Mod[] }} Drive
  * @typedef {{ process: boolean, homebrewChannel: boolean, detail: string }} RootState
  * @typedef {{ version: string, gameVersion: string, mode: 'setup'|'game', persistent: boolean, freeBytes: number,
- *             safetyMarginBytes: number, driveFolder: string, restartPending: boolean,
+ *             safetyMarginBytes: number, driveFolder: string, restartPending: boolean, crashedLastTime: boolean,
  *             event: { serial: number, text: string }, progress: { busy: boolean, what: string, done: number, total: number },
  *             root: RootState, rom: StoredFile, soundtrack: StoredFile, mods: Mod[], drives: Drive[] }} Status
  * @typedef {{ path: string, size: number, mtime: number }} SaveFile
@@ -332,9 +340,9 @@ async function refreshStatus() {
   byId('app').classList.remove('hidden');
   byId('rom-folder').textContent = status.driveFolder;
 
-  say(byId('mode-line'), status.mode === 'setup'
-    ? 'The TV is waiting for the ROM: the game starts as soon as it arrives.'
-    : 'The game is running on the TV.', status.mode === 'setup' ? 'warn' : 'ok');
+  say(byId('mode-line'), status.mode === 'game' ? 'The game is running on the TV.'
+    : status.crashedLastTime && status.rom.present ? 'The game closed unexpectedly last time: the TV waits for OK to start it (see Trouble? below).'
+    : 'The TV is waiting for the ROM: the game starts as soon as it arrives.', status.mode === 'setup' ? 'warn' : 'ok');
   say(byId('space-line'), 'Free space on the TV: ' + humanBytes(status.freeBytes)
     + (status.persistent ? '' : '. Warning: the app could not find its storage, nothing is kept after it closes.'), 'dim');
   byId('event-line').textContent = status.event.text;
@@ -348,6 +356,10 @@ async function refreshStatus() {
   renderMods(status);
   renderRootAndDrives(status);
   byId('log-link').setAttribute('href', '/api/log?pin=' + encodeURIComponent(pin()));
+  byId('portlog-link').setAttribute('href', '/api/portlog?pin=' + encodeURIComponent(pin()));
+  byId('log-previous-link').setAttribute('href', '/api/log?previous=1&pin=' + encodeURIComponent(pin()));
+  byId('portlog-previous-link').setAttribute('href', '/api/portlog?previous=1&pin=' + encodeURIComponent(pin()));
+  byId('crash-line').classList.toggle('hidden', !status.crashedLastTime);
   byId('backup-download').setAttribute('href', '/api/saves/backup?pin=' + encodeURIComponent(pin()));
 }
 
@@ -359,7 +371,8 @@ function renderFile(status, kind, file) {
   const where = file.location === 'usb' ? 'on ' + driveLabel(status, file.drive) : 'on the TV';
   if (file.present) {
     const unreadable = file.location === 'usb' && file.source === 'none';
-    say(byId(kind + '-line'), label + ' installed ' + where + ' (' + humanBytes(file.size) + ')'
+    say(byId(kind + '-line'), label + ' installed ' + where + ' (' + file.file + ', ' + humanBytes(file.size) + ')'
+      + (file.importedFrom ? ', copied from ' + file.importedFrom : '')
       + (unreadable ? ', but the app cannot read that drive (it needs root access).' : '.'), unreadable ? 'warn' : 'ok');
   } else {
     say(byId(kind + '-line'), kind === 'rom' ? 'No ROM yet.' : 'Not installed: the original soundtrack plays.',

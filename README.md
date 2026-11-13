@@ -36,9 +36,12 @@ These show the app's own screens; none of them contain game graphics.
 
 - An LG webOS TV with the [webOS Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel)
   (or Developer Mode).
-- **The Sonic 3 & Knuckles ROM**: `Sonic_Knuckles_wSonic3.bin` (4 MB), Sonic & Knuckles locked on to
-  Sonic 3, as Sonic 3 & Knuckles on Steam and the Sega Mega Drive & Genesis Classics include it
-  (in `uncompressed ROMs`). A.I.R. checks it and accepts only that ROM.
+- **The Sonic 3 & Knuckles ROM**: the 4 MB image of Sonic & Knuckles locked on to Sonic 3, as a `.bin`
+  or `.md` file with any name. Sonic 3 & Knuckles on Steam and the Sega Mega Drive & Genesis Classics
+  include it as `Sonic_Knuckles_wSonic3.bin` (in `uncompressed ROMs`). Separate Sonic & Knuckles and
+  Sonic 3 ROMs (2 MB each) work too when they are in RetroArch's `roms/megadrive` or `roms/genesis` (below): the app joins
+  them. A.I.R. checks the content and accepts only that exact ROM; interleaved `.smd` dumps are not
+  accepted.
 - Optional: **the remastered soundtrack**, `audioremaster.bin` (about 126 MB), from the `data` folder of
   the official Sonic 3 A.I.R. download at [sonic3air.org](https://sonic3air.org). It is not part of this
   app: the remastered tracks are arrangements of SEGA's music, so, like the ROM, you add them from a
@@ -58,7 +61,8 @@ phone or computer on the same network, enter the PIN and upload the ROM. The gam
 soon as it arrives.
 
 Instead, you can put the ROM on a USB drive, in a folder named **`Sonic 3 AIR`**, and plug it in: the
-setup screen finds it.
+setup screen finds it. A drive set up for RetroArch works as it is: a Sonic 3 & Knuckles ROM in its
+`roms/megadrive` or `roms/genesis` folder (see [USB drives](#usb-drives)) is copied to the TV.
 
 The first start compiles the game's scripts, which takes a few seconds; later starts are quicker.
 
@@ -106,10 +110,19 @@ then offers **Restart the game now** (the menu has the same).
 A drive keeps the game's files in its `Sonic 3 AIR` folder:
 
 ```
-Sonic 3 AIR/Sonic_Knuckles_wSonic3.bin   the ROM
+Sonic 3 AIR/<rom>.bin or .md             the ROM (any name; Sonic_Knuckles_wSonic3.bin is used first)
 Sonic 3 AIR/audioremaster.bin            the remastered soundtrack
 Sonic 3 AIR/mods/                        mods (zip files or folders)
 ```
+
+**RetroArch folders.** As in Webmon, when there is no ROM on the TV or in a `Sonic 3 AIR` folder, the
+app also looks in the RetroArch-style `roms/megadrive` and `roms/genesis` folders at the root of each
+drive (any capitalisation, and up to two folder levels below them) for `.bin`, `.md` and `.gen` files
+with "sonic" in their name (any capitalisation). A 4 MB file that is the Sonic 3 & Knuckles ROM, or a
+2 MB Sonic & Knuckles ROM (with "knuckles" in its name) plus a 2 MB Sonic 3 ROM (with "3" in its name),
+joined, is checked
+and **copied** to the TV, so the game keeps working without the drive. Nothing in the RetroArch folders
+is changed. The page and the menu show where the copy came from.
 
 At start-up the app links them where the game looks (a drive's mods appear in the game next to the
 TV's). Whether the app can read and write a drive itself depends on the TV's firmware; on a rooted

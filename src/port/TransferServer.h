@@ -72,6 +72,9 @@ public:
      */
     void SetSetupMode(bool setupMode) { setupMode_.store(setupMode); }
 
+    /** Whether the game ended unexpectedly at the last launch (the page then points at its logs). */
+    void SetCrashedLastTime(bool crashed) { crashedLastTime_.store(crashed); }
+
     /** The bound port, or 0 when not running. */
     std::uint16_t Port() const { return port_.load(); }
 
@@ -98,6 +101,7 @@ private:
     std::thread thread_;
     std::atomic<std::uint16_t> port_{ 0 };
     std::atomic<bool> setupMode_{ true };
+    std::atomic<bool> crashedLastTime_{ false };
     std::atomic<bool> busy_{ false }; ///< A large upload or move is running (one at a time).
 
     mutable std::mutex statusMutex_;

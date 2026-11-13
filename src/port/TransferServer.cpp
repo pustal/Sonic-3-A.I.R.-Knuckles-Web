@@ -16,10 +16,12 @@
  *   GET    /api/saves                      JSON list of the save files
  *   GET    /api/saves/backup               the saves as a zip file
  *   PUT    /api/saves/backup               raw body = a backup zip to restore
- *   GET    /api/log                        the game's log file
+ *   GET    /api/log[?previous=1]           the game's log file (of the last launch with previous=1)
+ *   GET    /api/portlog[?previous=1]       this port's log (port-log.txt), likewise
  *   POST   /api/restart                    quits the game and starts the app again
  */
 #include "TransferServer.h"
+#include "Log.h"
 
 #include "MenuOverlay.h"
 #include "NetInfo.h"
@@ -253,7 +255,7 @@ StoredFile FindStored(const Storage &storage, const std::vector<UsbDrive> &drive
         const std::uint64_t size = file == GameFile::Rom ? drive.romBytes : drive.soundtrackBytes;
         if (size == 0)
             continue;
-        stored.path  = UsbAccess::DrivePath(drive.mountPoint, file);
+        stored.path  = UsbAccess::StoredPath(drive, file);
         stored.drive = drive.mountPoint;
         stored.size  = size;
         return stored;
@@ -270,7 +272,7 @@ void RemoveOtherCopies(Storage &storage, UsbAccess &usb, GameFile file, const st
         usb.RemoveFile(local);
     for (const UsbDrive &drive : usb.ListDrives()) {
         const std::uint64_t size = file == GameFile::Rom ? drive.romBytes : drive.soundtrackBytes;
-        const std::string path   = UsbAccess::DrivePath(drive.mountPoint, file);
+        const std::string path   = UsbAccess::StoredPath(drive, file);
         if (size != 0 && path != keep)
             usb.RemoveFile(path);
     }
@@ -371,7 +373,7 @@ void TransferServer::PublishEvent(const std::string &message)
     std::lock_guard<std::mutex> lock(statusMutex_);
     status_.lastEvent = message;
     ++status_.eventSerial;
-    std::printf("[S3AIR/webOS] transfer: %s\n", message.c_str());
+    Log::Printf("transfer: %s", message.c_str());
 }
 
 void TransferServer::MarkRestartPending()
@@ -427,6 +429,7 @@ void TransferServer::RegisterRoutes()
              << ",\"freeBytes\":" << storage_.FreeBytes() << ",\"safetyMarginBytes\":" << Storage::kSafetyMarginBytes
              << ",\"driveFolder\":\"" << UsbAccess::kDriveFolder << "\""
              << ",\"restartPending\":" << JsonBool(status.restartPending)
+             << ",\"crashedLastTime\":" << JsonBool(crashedLastTime_.load())
              << ",\"event\":{\"serial\":" << status.eventSerial << ",\"text\":\"" << JsonEscape(status.lastEvent) << "\"}"
              << ",\"progress\":{\"busy\":" << JsonBool(status.busy) << ",\"what\":\"" << JsonEscape(status.busyWhat)
              << "\",\"done\":" << status.doneBytes << ",\"total\":" << status.totalBytes << "}"
@@ -438,7 +441,9 @@ void TransferServer::RegisterRoutes()
             json << ",\"" << (file == GameFile::Rom ? "rom" : "soundtrack") << "\":{\"present\":" << JsonBool(!stored.path.empty())
                  << ",\"location\":\"" << (stored.path.empty() ? "none" : stored.drive.empty() ? "internal" : "usb") << "\""
                  << ",\"drive\":\"" << JsonEscape(stored.drive) << "\",\"size\":" << stored.size
-                 << ",\"source\":\"" << SourceName(usb_.ActiveSource(file)) << "\",\"file\":\"" << UsbAccess::FileName(file) << "\"}";
+                 << ",\"source\":\"" << SourceName(usb_.ActiveSource(file)) << "\",\"file\":\""
+                 << JsonEscape(fs::path(stored.path.empty() ? UsbAccess::FileName(file) : stored.path).filename().string()) << "\""
+                 << ",\"importedFrom\":\"" << JsonEscape(file == GameFile::Rom ? usb_.RomImportedFrom() : std::string()) << "\"}";
         }
 
         json << ",\"mods\":" << ModsJson(Storage::ListMods(storage_.ModsDir()), active, "");
@@ -458,11 +463,11 @@ void TransferServer::RegisterRoutes()
         res.set_content(json.str(), kJsonType);
     });
 
-    server.Get("/api/log", [this](const httplib::Request &, httplib::Response &res) {
-        const std::string path   = storage_.AppDataDir() + "/logfile.txt";
+    server.Get("/api/log", [this](const httplib::Request &req, httplib::Response &res) {
+        const std::string path   = storage_.GameLogPath(req.get_param_value("previous") == "1");
         const std::uint64_t size = Storage::FileSize(path);
         if (size == 0)
-            return Fail(res, 404, "The game has not written a log yet.");
+            return Fail(res, 404, "There is no such log.");
         std::ifstream in(path, std::ios::binary);
         const std::uint64_t skip = size > kMaxLogBytes ? size - kMaxLogBytes : 0;
         in.seekg(static_cast<std::streamoff>(skip));
@@ -471,6 +476,17 @@ void TransferServer::RegisterRoutes()
         text.resize(static_cast<std::size_t>(in.gcount()));
         res.set_header("Cache-Control", "no-store");
         res.set_content(std::move(text), kTextType);
+    });
+
+    server.Get("/api/portlog", [this](const httplib::Request &req, httplib::Response &res) {
+        const std::string path = storage_.PortLogPath(req.get_param_value("previous") == "1");
+        std::ifstream in(path, std::ios::binary);
+        if (path.empty() || !in)
+            return Fail(res, 404, "There is no such log.");
+        std::ostringstream text;
+        text << in.rdbuf();
+        res.set_header("Cache-Control", "no-store");
+        res.set_content(text.str(), kTextType);
     });
 
     server.Post("/api/restart", [this](const httplib::Request &, httplib::Response &res) {

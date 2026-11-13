@@ -3,6 +3,7 @@
  * @brief Implementation of the data folder helpers (see Storage.h).
  */
 #include "Storage.h"
+#include "Log.h"
 
 #include "SaveBackup.h"
 
@@ -161,8 +162,21 @@ bool Storage::IsValidRom(const std::string &path)
     std::ifstream in(path, std::ios::binary);
     if (!in.read(reinterpret_cast<char *>(rom.data()), static_cast<std::streamsize>(rom.size())))
         return false;
-    rom[kRomPatchOffset] = kRomPatchValue;
-    return rmx::getMurmur2_64(rom.data(), rom.size()) == kRomChecksum;
+    return IsValidRomData(rom);
+}
+
+bool Storage::IsValidRomData(const std::vector<unsigned char> &rom)
+{
+    if (rom.size() != kRomBytes)
+        return false;
+    std::vector<unsigned char> patched = rom;
+    patched[kRomPatchOffset]           = kRomPatchValue;
+    return rmx::getMurmur2_64(patched.data(), patched.size()) == kRomChecksum;
+}
+
+bool Storage::IsRomFileName(const std::string &name)
+{
+    return EndsWithNoCase(name, ".bin") || EndsWithNoCase(name, ".md") || EndsWithNoCase(name, ".gen");
 }
 
 bool Storage::IsSoundtrackPackage(const std::string &path)
@@ -284,7 +298,7 @@ bool Storage::ApplyPendingBackup() const
     const std::string error = SaveBackup::Restore(pending, AppDataDir());
     std::error_code ec;
     fs::remove(pending, ec);
-    std::printf("[S3AIR/webOS] pending save backup: %s\n", error.empty() ? "restored" : error.c_str());
+    Log::Printf("pending save backup: %s", error.empty() ? "restored" : error.c_str());
     return error.empty();
 }
 

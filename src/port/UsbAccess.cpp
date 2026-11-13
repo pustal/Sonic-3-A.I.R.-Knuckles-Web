@@ -4,6 +4,7 @@
  *        the drives' game files (see UsbAccess.h).
  */
 #include "UsbAccess.h"
+#include "Log.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -37,6 +38,24 @@ constexpr const char *kHbChannelExec = "luna://org.webosbrew.hbchannel.service/e
 constexpr std::array<const char *, 2> kLunaClients = { "/usr/bin/luna-send-pub", "/usr/bin/luna-send" };
 /** A drive's mods appear in the mods folder under this prefix plus the drive's label (ModLinkName). */
 constexpr const char *kModLinkPrefix = "usb-";
+/** The RetroArch system folders searched below "roms" (compared in lower case). */
+constexpr std::array<const char *, 2> kRetroArchSystemFolders = { "megadrive", "genesis" };
+/** Folder levels searched below a system folder (roms/megadrive/Sonic/... is level 1). */
+constexpr int kRetroArchDepth = 2;
+/** Most entries visited in one system folder (big collections stay quick to scan). */
+constexpr std::size_t kRetroArchScanLimit = 20000;
+
+/** Whether @p name (lower case) is one A.I.R.'s ROM can be filed under: it has "sonic" in it. */
+bool LooksLikeSonic(const std::string &name) { return name.find("sonic") != std::string::npos; }
+/** Most 2 MB files of each game tried when joining Sonic & Knuckles and Sonic 3. */
+constexpr std::size_t kMaxHalfCandidates = 8;
+
+/** @p text in lower case (ASCII). */
+std::string Lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
 
 /** Runs @p command with /bin/sh and captures stdout. @return The exit status, or -1. */
 int RunShell(const std::string &command, std::string *output)
@@ -263,7 +282,7 @@ void UsbAccess::ProbeRoot()
 
     std::lock_guard<std::mutex> lock(mutex_);
     root_ = status;
-    std::printf("[S3AIR/webOS] root: %s\n", status.detail.c_str());
+    Log::Printf("root: %s", status.detail.c_str());
 }
 
 RootStatus UsbAccess::Root() const
@@ -369,21 +388,56 @@ void UsbAccess::InspectDrive(UsbDrive *drive)
         }
     }
 
-    drive->romBytes        = SizeOf(DrivePath(drive->mountPoint, GameFile::Rom), drive->readable);
+    // The ROM: the name A.I.R. itself uses first, else any 4 MB ROM file in the folder.
+    const std::string folder = drive->mountPoint + "/" + kDriveFolder;
+    if (SizeOf(DrivePath(drive->mountPoint, GameFile::Rom), drive->readable) == Storage::kRomBytes) {
+        drive->romFile  = Storage::kRomName;
+        drive->romBytes = Storage::kRomBytes;
+    }
+    else {
+        for (const ModEntry &entry : ListDriveFolder(folder, drive->readable)) {
+            if (!entry.folder && entry.size == Storage::kRomBytes && Storage::IsRomFileName(entry.name)) {
+                drive->romFile  = entry.name;
+                drive->romBytes = entry.size;
+                break;
+            }
+        }
+    }
     drive->soundtrackBytes = SizeOf(DrivePath(drive->mountPoint, GameFile::Soundtrack), drive->readable);
 
     const std::string modsDir = drive->mountPoint + "/" + kDriveModsFolder;
     if (drive->readable) {
         std::error_code ec;
         drive->modsFolder = fs::is_directory(modsDir, ec);
-        if (drive->modsFolder)
-            drive->mods = Storage::ListMods(modsDir);
     }
-    else if (root) {
-        // One line per entry: "<size>|<type>|<path>", as busybox stat prints it.
+    else {
+        drive->modsFolder = root && RunAsRoot("test -d " + ShellQuote(modsDir));
+    }
+    if (drive->modsFolder) {
+        for (const ModEntry &entry : ListDriveFolder(modsDir, drive->readable)) {
+            if (entry.folder || Storage::IsAllowedModName(entry.name))
+                drive->mods.push_back(entry);
+        }
+    }
+}
+
+std::vector<ModEntry> UsbAccess::ListDriveFolder(const std::string &path, bool readable)
+{
+    std::vector<ModEntry> entries;
+    if (readable) {
+        std::error_code ec;
+        for (const fs::directory_entry &entry : fs::directory_iterator(path, ec)) {
+            const std::string name = entry.path().filename().string();
+            if (name.empty() || name.front() == '.')
+                continue;
+            const bool folder = entry.is_directory(ec);
+            entries.push_back({ name, folder ? 0 : Storage::FileSize(entry.path().string()), folder });
+        }
+    }
+    else if (Root().Available()) {
+        // One line per entry: "<size>|<type>|<name>", as busybox stat prints it.
         std::string listing;
-        drive->modsFolder = RunAsRoot("test -d " + ShellQuote(modsDir));
-        if (drive->modsFolder && RunAsRoot("cd " + ShellQuote(modsDir) + " && for f in *; do [ -e \"$f\" ] && stat -c '%s|%F|%n' \"$f\"; done", &listing)) {
+        if (RunAsRoot("cd " + ShellQuote(path) + " && for f in *; do [ -e \"$f\" ] && stat -L -c '%s|%F|%n' \"$f\"; done", &listing)) {
             std::istringstream lines(listing);
             std::string line;
             while (std::getline(lines, line)) {
@@ -393,15 +447,218 @@ void UsbAccess::InspectDrive(UsbDrive *drive)
                     continue;
                 const std::string name = line.substr(second + 1);
                 const bool folder      = line.compare(first + 1, second - first - 1, "directory") == 0;
-                if (name.empty() || name.front() == '.')
-                    continue;
-                if (folder || Storage::IsAllowedModName(name))
-                    drive->mods.push_back({ name, folder ? 0 : std::strtoull(line.c_str(), nullptr, 10), folder });
+                if (!name.empty() && name.front() != '.')
+                    entries.push_back({ name, folder ? 0 : std::strtoull(line.c_str(), nullptr, 10), folder });
             }
-            std::sort(drive->mods.begin(), drive->mods.end(), [](const ModEntry &a, const ModEntry &b) { return a.name < b.name; });
         }
     }
+    std::sort(entries.begin(), entries.end(), [](const ModEntry &a, const ModEntry &b) { return a.name < b.name; });
+    return entries;
 }
+
+bool UsbAccess::ReadDriveFile(const std::string &path, bool readable, std::uint64_t maxBytes, const std::string &tempDir,
+                              std::vector<unsigned char> *out)
+{
+    // A drive the app cannot read: root copies the file into the data folder first.
+    std::string source = path;
+    std::error_code ec;
+    if (!readable) {
+        if (!Root().Available())
+            return false;
+        fs::create_directories(tempDir, ec);
+        source = tempDir + "/rom-read.tmp";
+        if (!RunAsRoot("cp -f " + ShellQuote(path) + " " + ShellQuote(source) + " && chmod 644 " + ShellQuote(source))) {
+            RemoveFile(source);
+            return false;
+        }
+    }
+    const std::uint64_t size = Storage::FileSize(source);
+    bool ok                  = size > 0 && size <= maxBytes;
+    if (ok) {
+        out->resize(static_cast<std::size_t>(size));
+        std::ifstream in(source, std::ios::binary);
+        ok = static_cast<bool>(in.read(reinterpret_cast<char *>(out->data()), static_cast<std::streamsize>(out->size())));
+    }
+    if (!readable)
+        RemoveFile(source);
+    return ok;
+}
+
+bool UsbAccess::ImportRetroArchRom(const Storage &storage, const std::vector<UsbDrive> &drives)
+{
+    const std::string tempDir = storage.IncomingDir();
+    /** A ROM-sized file in a RetroArch folder. */
+    struct Candidate {
+        std::string path;
+        std::string where; ///< For people: "USB sda1: roms/megadrive".
+        bool readable;
+    };
+
+    for (const UsbDrive &drive : drives) {
+        if (stopSearch_.load())
+            return false;
+        Log::Printf("looking for the ROM in roms/megadrive and roms/genesis on %s", drive.mountPoint.c_str());
+        // The ROM-sized files with "sonic" in their name in roms/megadrive and roms/genesis
+        // (any capitalisation) at the root of the drive: (size, path).
+        std::vector<std::pair<std::uint64_t, std::string>> files;
+        if (drive.readable) {
+            std::error_code ec;
+            for (fs::directory_iterator top(drive.mountPoint, fs::directory_options::skip_permission_denied, ec), end;
+                 !ec && top != end; top.increment(ec)) {
+                if (!top->is_directory(ec) || Lower(top->path().filename().string()) != "roms")
+                    continue;
+                std::error_code systemError;
+                for (fs::directory_iterator system(top->path(), fs::directory_options::skip_permission_denied, systemError), systemEnd;
+                     !systemError && system != systemEnd; system.increment(systemError)) {
+                    const std::string systemName = Lower(system->path().filename().string());
+                    if (!system->is_directory(systemError)
+                        || std::none_of(kRetroArchSystemFolders.begin(), kRetroArchSystemFolders.end(),
+                                        [&](const char *folder) { return systemName == folder; }))
+                        continue;
+                    std::size_t visited = 0;
+                    std::error_code walkError;
+                    for (fs::recursive_directory_iterator it(system->path(), fs::directory_options::skip_permission_denied, walkError), stop;
+                         !walkError && it != stop && visited < kRetroArchScanLimit && !stopSearch_.load(); it.increment(walkError), ++visited) {
+                        if (it.depth() >= kRetroArchDepth)
+                            it.disable_recursion_pending();
+                        const std::string name = it->path().filename().string();
+                        if (!Storage::IsRomFileName(name) || !LooksLikeSonic(Lower(name)) || !it->is_regular_file(walkError))
+                            continue;
+                        // Only the sizes the ROM (or one of its halves) can have are worth reading.
+                        const std::uint64_t size = it->file_size(walkError);
+                        if (size == Storage::kRomBytes || size == Storage::kHalfRomBytes)
+                            files.emplace_back(size, it->path().string());
+                    }
+                }
+            }
+        }
+        else if (Root().Available()) {
+            // The app cannot list the drive: ask root (busybox find has no -iname on every TV).
+            std::string listing;
+            const std::string command = "for r in " + ShellQuote(drive.mountPoint) + "/*; do "
+                                        "[ -d \"$r\" ] && [ \"$(basename \"$r\" | tr 'A-Z' 'a-z')\" = roms ] || continue; "
+                                        "for d in \"$r\"/*; do "
+                                        "case \"$(basename \"$d\" | tr 'A-Z' 'a-z')\" in megadrive|genesis) ;; *) continue ;; esac; "
+                                        "[ -d \"$d\" ] && find \"$d\" -maxdepth " + std::to_string(kRetroArchDepth + 1) +
+                                        // Only files of the ROM's or a half's size (busybox find counts -size in kB with k).
+                                        " -type f \\( -size 4096k -o -size 2048k \\); done; done"
+                                        " | grep -i -E '\\.(bin|md|gen)$' | grep -i sonic | head -n 100"
+                                        " | while read -r f; do stat -L -c '%s|%n' \"$f\"; done";
+            if (RunAsRoot(command, &listing)) {
+                std::istringstream lines(listing);
+                std::string line;
+                while (std::getline(lines, line)) {
+                    const std::size_t bar = line.find('|');
+                    if (bar != std::string::npos)
+                        files.emplace_back(std::strtoull(line.c_str(), nullptr, 10), line.substr(bar + 1));
+                }
+            }
+        }
+
+        Log::Printf("%zu Sonic ROM-sized files in roms/megadrive or roms/genesis on %s", files.size(), drive.label.c_str());
+        const auto describe = [&](const std::string &path) {
+            std::error_code ec;
+            return "USB " + drive.label + ": " + fs::relative(fs::path(path).parent_path(), drive.mountPoint, ec).string();
+        };
+        // The locked-on image first; then Sonic & Knuckles + Sonic 3 as two 2 MB halves, joined in that order.
+        std::vector<Candidate> whole, lockOn, sonic3;
+        for (const auto &[size, path] : files) {
+            const std::string name = Lower(fs::path(path).filename().string());
+            if (size == Storage::kRomBytes)
+                whole.push_back({ path, describe(path), drive.readable });
+            else if (size == Storage::kHalfRomBytes && name.find("knuckles") != std::string::npos && lockOn.size() < kMaxHalfCandidates)
+                lockOn.push_back({ path, describe(path), drive.readable });
+            else if (size == Storage::kHalfRomBytes && name.find('3') != std::string::npos && sonic3.size() < kMaxHalfCandidates)
+                sonic3.push_back({ path, describe(path), drive.readable });
+        }
+
+        std::vector<unsigned char> rom;
+        std::string from;
+        for (const Candidate &candidate : whole) {
+            if (ReadDriveFile(candidate.path, candidate.readable, Storage::kRomBytes, tempDir, &rom) && Storage::IsValidRomData(rom)) {
+                from = candidate.where;
+                break;
+            }
+        }
+        if (from.empty() && !lockOn.empty() && !sonic3.empty()) {
+            std::vector<std::vector<unsigned char>> secondHalves(sonic3.size());
+            for (std::size_t j = 0; j < sonic3.size(); ++j)
+                ReadDriveFile(sonic3[j].path, sonic3[j].readable, Storage::kHalfRomBytes, tempDir, &secondHalves[j]);
+            for (const Candidate &first : lockOn) {
+                std::vector<unsigned char> firstHalf;
+                if (!ReadDriveFile(first.path, first.readable, Storage::kHalfRomBytes, tempDir, &firstHalf) || firstHalf.size() != Storage::kHalfRomBytes)
+                    continue;
+                for (std::size_t j = 0; j < sonic3.size() && from.empty(); ++j) {
+                    if (secondHalves[j].size() != Storage::kHalfRomBytes)
+                        continue;
+                    rom = firstHalf;
+                    rom.insert(rom.end(), secondHalves[j].begin(), secondHalves[j].end());
+                    if (Storage::IsValidRomData(rom))
+                        from = first.where + " (joined with " + fs::path(sonic3[j].path).filename().string() + ")";
+                }
+                if (!from.empty())
+                    break;
+            }
+        }
+        if (from.empty())
+            continue;
+
+        // Copy it to the TV, as A.I.R. itself keeps a copy of a ROM it found elsewhere.
+        const std::string local    = storage.RomPath();
+        const std::string partPath = local + ".part";
+        std::FILE *out             = std::fopen(partPath.c_str(), "wb");
+        bool written               = out && std::fwrite(rom.data(), 1, rom.size(), out) == rom.size();
+        if (out)
+            written = std::fflush(out) == 0 && fsync(fileno(out)) == 0 && std::fclose(out) == 0 && written;
+        std::error_code ec;
+        // This runs alongside the setup screen and the transfer page: a ROM placed meanwhile wins.
+        std::lock_guard<std::recursive_mutex> placing(placeMutex_);
+        if (written && Storage::FileSize(local) == 0) {
+            ReleaseLink(storage, GameFile::Rom); // an empty file a failed bind mount left
+            fs::rename(partPath, local, ec);
+        }
+        else {
+            ec = std::make_error_code(std::errc::file_exists);
+        }
+        if (!written || ec) {
+            fs::remove(partPath, ec);
+            Log::Printf("ROM found in %s not copied (%s)", from.c_str(), written ? "a ROM arrived meanwhile" : "write failed");
+            return false;
+        }
+        Log::Printf("ROM copied from %s", from.c_str());
+        std::lock_guard<std::mutex> lock(mutex_);
+        romImportedFrom_                   = from;
+        sources_[Index(GameFile::Rom)]     = Source::Internal;
+        paths_[Index(GameFile::Rom)]       = local;
+        return true;
+    }
+    return false;
+}
+
+UsbAccess::~UsbAccess()
+{
+    stopSearch_.store(true);
+    if (searchThread_.joinable())
+        searchThread_.join();
+}
+
+void UsbAccess::StartRetroArchSearch(const Storage &storage)
+{
+    std::lock_guard<std::mutex> starting(searchMutex_);
+    if (searching_.load())
+        return;
+    if (searchThread_.joinable())
+        searchThread_.join(); // the last search, finished
+    searching_.store(true);
+    const Storage target = storage;
+    searchThread_ = std::thread([this, target] {
+        if (Storage::FileSize(target.RomPath()) == 0)
+            ImportRetroArchRom(target, ListDrives());
+        searching_.store(false);
+    });
+}
+
+bool UsbAccess::RetroArchSearchRunning() const { return searching_.load(); }
 
 std::vector<UsbDrive> UsbAccess::ListDrives()
 {
@@ -451,6 +708,27 @@ std::string UsbAccess::DrivePath(const std::string &mountPoint, GameFile file)
     return mountPoint + "/" + kDriveFolder + "/" + FileName(file);
 }
 
+std::string UsbAccess::StoredPath(const UsbDrive &drive, GameFile file)
+{
+    if (file == GameFile::Rom && !drive.romFile.empty())
+        return drive.mountPoint + "/" + kDriveFolder + "/" + drive.romFile;
+    return DrivePath(drive.mountPoint, file);
+}
+
+std::string UsbAccess::RomImportedFrom() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return romImportedFrom_;
+}
+
+std::string UsbAccess::MountSignature()
+{
+    std::string signature;
+    for (const std::string &mountPoint : UsbMountPoints())
+        signature += mountPoint + "\n";
+    return signature;
+}
+
 Source UsbAccess::LinkFile(const std::string &source, const std::string &local, bool readable)
 {
     std::error_code ec;
@@ -466,7 +744,7 @@ Source UsbAccess::LinkFile(const std::string &source, const std::string &local, 
         return Source::UsbMount;
     RunAsRoot("umount " + ShellQuote(local));
     fs::remove(local, ec);
-    std::printf("[S3AIR/webOS] could not make %s readable to the app\n", source.c_str());
+    Log::Printf("could not make %s readable to the app", source.c_str());
     return Source::None;
 }
 
@@ -539,7 +817,7 @@ void UsbAccess::PlaceContent(const Storage &storage)
                 const std::uint64_t size = file == GameFile::Rom ? drive.romBytes : drive.soundtrackBytes;
                 if (size == 0)
                     continue;
-                const std::string drivePath = DrivePath(drive.mountPoint, file);
+                const std::string drivePath = StoredPath(drive, file);
                 source                      = LinkFile(drivePath, local, drive.readable);
                 if (source != Source::None) {
                     path = drivePath;
@@ -547,7 +825,7 @@ void UsbAccess::PlaceContent(const Storage &storage)
                 }
             }
         }
-        std::printf("[S3AIR/webOS] %s: %s\n", FileName(file), path.empty() ? "none" : path.c_str());
+        Log::Printf("%s: %s", FileName(file), path.empty() ? "none" : path.c_str());
         std::lock_guard<std::mutex> lock(mutex_);
         sources_[Index(file)] = source;
         paths_[Index(file)]   = path;
@@ -576,7 +854,7 @@ void UsbAccess::PlaceContent(const Storage &storage)
         }
         if (done) {
             linked.push_back(drive.mountPoint);
-            std::printf("[S3AIR/webOS] mods: %s linked\n", source.c_str());
+            Log::Printf("mods: %s linked", source.c_str());
         }
     }
     std::lock_guard<std::mutex> lock(mutex_);

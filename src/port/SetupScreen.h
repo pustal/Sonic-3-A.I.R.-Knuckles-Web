@@ -5,6 +5,10 @@
  * It shows the address to open on a phone or computer, the PIN, the free
  * space, USB and root state and the upload progress, and returns as soon as a
  * ROM is in place (uploaded, or found on a USB drive plugged in meanwhile).
+ *
+ * When the game ended unexpectedly at the last launch, the same screen
+ * explains that the logs of that launch are on the transfer page, and starts
+ * the game only when the player presses OK, so the page stays reachable.
  */
 #ifndef S3W_SETUP_SCREEN_H
 #define S3W_SETUP_SCREEN_H
@@ -23,14 +27,22 @@ enum class SetupResult {
     Failed,   ///< The screen could not be created.
 };
 
+/** Why the setup screen is shown. */
+enum class SetupReason {
+    MissingRom,  ///< No ROM yet: wait for one.
+    AfterCrash,  ///< The game ended unexpectedly last time: offer its logs, start on OK.
+};
+
 /**
- * Runs the setup screen until a ROM is in place or the player exits.
+ * Runs the setup screen until a ROM is in place (or, after a crash, the
+ * player chooses to start) or the player exits.
  * Creates and destroys its own window; SDL video is shut down on return so
  * the game can initialise it from scratch.
  *
  * @param server May be null if the transfer server failed to start.
  */
-SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const TransferServer *server);
+SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const TransferServer *server,
+                           SetupReason reason = SetupReason::MissingRom);
 
 } // namespace s3w
 

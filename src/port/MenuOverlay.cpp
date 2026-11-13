@@ -5,6 +5,7 @@
 #include "MenuOverlay.h"
 
 #include "BitmapFont.h"
+#include "Log.h"
 #include "RemoteInput.h"
 #include "SdlHooks.h"
 
@@ -343,7 +344,7 @@ private:
         if (!ok) {
             std::array<char, 512> log{};
             glGetShaderInfoLog(shader, static_cast<GLsizei>(log.size()), nullptr, log.data());
-            SDL_Log("[S3AIR/webOS] menu shader: %s", log.data());
+            Log::Printf("menu shader: %s", log.data());
             glDeleteShader(shader);
             return 0;
         }

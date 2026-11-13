@@ -5,15 +5,17 @@
  * Before the game starts:
  *  1. the data folder is chosen and the game is pointed at it (XDG_DATA_HOME),
  *  2. a save backup received during the last session is restored,
- *  3. root access is probed and the USB drives' game files are linked in,
- *  4. the transfer page starts (it keeps running while the game plays),
- *  5. without a ROM, the setup screen waits for one,
+ *  3. the transfer page starts (it keeps running while the game plays),
+ *  4. root access is probed and the USB drives' game files are linked in,
+ *  5. without a ROM, the drives' RetroArch folders are searched for one (on
+ *     a thread) and the setup screen waits for it,
  *  6. the game's working directory is prepared,
  * then A.I.R.'s own main() runs (renamed s3air_main by CMakeLists.txt). When
  * the game quits after a restart request (the menu or the transfer page), the
  * app starts itself again.
  */
 #include "port/GameFolder.h"
+#include "port/Log.h"
 #include "port/MenuOverlay.h"
 #include "port/NetInfo.h"
 #include "port/RemoteInput.h"
@@ -29,6 +31,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -67,6 +71,9 @@ OverlayInfo GatherOverlayInfo(const Storage &storage, UsbAccess &usb, const Tran
     info.romSource = DescribeSource(usb.ActiveSource(GameFile::Rom), usb.ActivePath(GameFile::Rom));
     if (info.romSource.empty())
         info.romSource = "missing";
+    const std::string importedFrom = usb.RomImportedFrom();
+    if (!importedFrom.empty())
+        info.romSource += " (copied from " + importedFrom + ")";
     info.soundtrackSource = DescribeSource(usb.ActiveSource(GameFile::Soundtrack), usb.ActivePath(GameFile::Soundtrack));
     if (info.soundtrackSource.empty())
         info.soundtrackSource = "not installed (add it on the transfer page)";
@@ -96,26 +103,41 @@ int main(int argc, char **argv)
     Storage storage = Storage::Resolve();
     storage.CreateFolders();
     setenv("XDG_DATA_HOME", storage.Root().c_str(), 1);
-    std::printf("[S3AIR/webOS] data folder: %s%s\n", storage.Root().c_str(), storage.Persistent() ? "" : " (temporary)");
+
+    // The last launch's logs are kept (the transfer page offers them). If the
+    // game was still marked as running, that launch ended in a crash.
+    const bool crashedLastTime = Storage::FileSize(storage.GameRunningMarkerPath()) > 0;
+    std::error_code renameError;
+    std::filesystem::rename(storage.PortLogPath(false), storage.PortLogPath(true), renameError);
+    std::filesystem::rename(storage.GameLogPath(false), storage.GameLogPath(true), renameError);
+    Log::Open(storage.PortLogPath(false));
+    Log::InstallCrashHandler();
+    Log::Printf("data folder: %s%s", storage.Root().c_str(), storage.Persistent() ? "" : " (temporary)");
+    if (crashedLastTime)
+        Log::Printf("the game did not end normally at the last launch");
 
     // 2. Saves restored from the transfer page while the game was running.
     storage.ApplyPendingBackup();
 
-    // 3. Root access and the USB drives.
+    // 3. The transfer page, first, so it can be reached (and its logs read) even
+    //    if something below takes long.
     UsbAccess usb;
-    usb.ProbeRoot();
-    usb.PlaceContent(storage);
-
-    // 4. The transfer page.
     TransferServer server(storage, usb, LoadOrCreatePin(storage));
     if (server.Start())
-        std::printf("[S3AIR/webOS] transfer page on port %u, PIN %s\n", static_cast<unsigned>(server.Port()), server.Pin().c_str());
+        Log::Printf("transfer page on port %u, PIN %s", static_cast<unsigned>(server.Port()), server.Pin().c_str());
     else
-        std::printf("[S3AIR/webOS] the transfer page could not start\n");
+        Log::Printf("the transfer page could not start");
+    server.SetCrashedLastTime(crashedLastTime);
     MenuOverlay::SetInfoProvider([&storage, &usb, &server] { return GatherOverlayInfo(storage, usb, server); });
 
-    // 5. No ROM yet: wait for one.
+    // 4. Root access and the USB drives.
+    usb.ProbeRoot();
+    usb.PlaceContent(storage);
+    Log::Printf("USB drives checked");
+
+    // 5. No ROM yet: look in RetroArch folders (on a thread) and wait for one.
     if (Storage::FileSize(storage.RomPath()) != Storage::kRomBytes) {
+        usb.StartRetroArchSearch(storage);
         server.SetSetupMode(true);
         const SetupResult setup = RunSetupScreen(storage, usb, server.Port() != 0 ? &server : nullptr);
         if (setup != SetupResult::RomReady) {
@@ -123,12 +145,21 @@ int main(int argc, char **argv)
             return setup == SetupResult::Exit ? 0 : 1;
         }
     }
+    // The game ended unexpectedly last time: wait for OK, so its logs can be fetched first.
+    else if (crashedLastTime) {
+        server.SetSetupMode(true);
+        const SetupResult setup = RunSetupScreen(storage, usb, server.Port() != 0 ? &server : nullptr, SetupReason::AfterCrash);
+        if (setup == SetupResult::Exit) {
+            server.Stop();
+            return 0;
+        }
+    }
     server.SetSetupMode(false);
 
     // 6. The game's working directory.
     const std::string folderError = GameFolder::Prepare(storage);
     if (!folderError.empty()) {
-        std::printf("[S3AIR/webOS] %s\n", folderError.c_str());
+        Log::Printf("%s", folderError.c_str());
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Sonic 3 A.I.R.", folderError.c_str(), nullptr);
         server.Stop();
         return 1;
@@ -139,15 +170,20 @@ int main(int argc, char **argv)
     std::string executable = storage.GameDir() + "/Sonic3AIR";
     std::vector<char *> gameArgs = { executable.data(), nullptr };
     if (chdir(storage.GameDir().c_str()) != 0)
-        std::printf("[S3AIR/webOS] could not enter %s\n", storage.GameDir().c_str());
+        Log::Printf("could not enter %s", storage.GameDir().c_str());
+    Log::Printf("starting the game");
+    // Marks the game as running until it returns: still there at the next launch means a crash.
+    std::ofstream(storage.GameRunningMarkerPath()) << "running\n";
     const int result = s3air_main(1, gameArgs.data());
+    std::filesystem::remove(storage.GameRunningMarkerPath(), renameError);
+    Log::Printf("the game ended (%d)", result);
 
     server.Stop();
     if (MenuOverlay::RestartRequested()) {
-        std::printf("[S3AIR/webOS] restarting\n");
+        Log::Printf("restarting");
         std::fflush(stdout);
         execv("/proc/self/exe", argv);
-        std::printf("[S3AIR/webOS] could not restart\n");
+        Log::Printf("could not restart");
     }
     return result;
 }

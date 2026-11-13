@@ -11,22 +11,35 @@
  * TVs; newer firmwares may refuse calls from apps).
  *
  * A drive keeps the game's files in its "Sonic 3 AIR" folder:
- *   Sonic 3 AIR/Sonic_Knuckles_wSonic3.bin   the ROM
+ *   Sonic 3 AIR/<rom>.bin or .md             the ROM (Sonic_Knuckles_wSonic3.bin
+ *                                            first; else any 4 MB ROM file there)
  *   Sonic 3 AIR/audioremaster.bin            the remastered soundtrack
  *   Sonic 3 AIR/mods/                        mods (zip files or folders)
  * PlaceContent() makes the game see them where it looks in its app data
  * folder: a symlink, or a root bind mount when the app cannot read the drive
  * itself. A ROM or soundtrack stored on the TV always wins over a drive's;
  * a drive's mods appear next to the TV's, in mods/usb-<drive>.
+ *
+ * With no ROM anywhere else, the app also looks in the RetroArch-style
+ * system folders roms/megadrive and roms/genesis at the root of each drive
+ * (any capitalisation, and two folder levels below them), at .bin, .md and
+ * .gen files with "sonic" in their name, as Webmon does: a Sonic 3 & Knuckles
+ * ROM there (the 4 MB locked-on image, or Sonic & Knuckles and
+ * Sonic 3 as two 2 MB files, which it joins) is checked and copied to the TV,
+ * so the game keeps working without the drive. Nothing in those folders is
+ * changed. Searching a large collection takes a while, so this runs on its
+ * own thread (StartRetroArchSearch()), while the setup screen is up.
  */
 #ifndef S3W_USB_ACCESS_H
 #define S3W_USB_ACCESS_H
 
 #include "Storage.h"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -51,6 +64,7 @@ struct UsbDrive {
     bool spaceKnown = false;          ///< statvfs (or root df) succeeded.
     bool readable = false;            ///< The app can list it directly.
     bool writable = false;            ///< The app can create files on it directly.
+    std::string romFile;              ///< Its ROM's file name in "Sonic 3 AIR", empty when it has none.
     std::uint64_t romBytes = 0;       ///< Size of its ROM, 0 when it has none.
     std::uint64_t soundtrackBytes = 0;///< Size of its soundtrack package, 0 when it has none.
     bool modsFolder = false;          ///< "Sonic 3 AIR/mods" exists.
@@ -74,6 +88,12 @@ enum class GameFile {
 class UsbAccess
 {
 public:
+    UsbAccess() = default;
+    /** Stops a RetroArch search that is still running (it ends at its next file). */
+    ~UsbAccess();
+    UsbAccess(const UsbAccess &)            = delete;
+    UsbAccess &operator=(const UsbAccess &) = delete;
+
     /** The game's folder on a drive, relative to its mount point. */
     static constexpr const char *kDriveFolder = "Sonic 3 AIR";
     /** The mods folder on a drive, relative to its mount point. */
@@ -100,8 +120,27 @@ public:
     /** Where the game reads @p file in the app data folder. */
     static std::string LocalPath(const Storage &storage, GameFile file);
 
-    /** Where @p file lives on the drive mounted at @p mountPoint. */
+    /** Where @p file goes on the drive mounted at @p mountPoint (uploads and moves use this name). */
     static std::string DrivePath(const std::string &mountPoint, GameFile file);
+
+    /** Where @p file is on @p drive (for the ROM, the file InspectDrive found). */
+    static std::string StoredPath(const UsbDrive &drive, GameFile file);
+
+    /**
+     * Starts looking for the ROM in the drives' RetroArch "roms" folders on a
+     * thread (see the file comment), unless a search is running already or
+     * a ROM is in place. The ROM is copied to @p storage's ROM path.
+     */
+    void StartRetroArchSearch(const Storage &storage);
+
+    /** Whether a RetroArch search is running. */
+    bool RetroArchSearchRunning() const;
+
+    /** Where the ROM was copied from out of a RetroArch folder this session ("USB sda1: roms/megadrive"), or empty. */
+    std::string RomImportedFrom() const;
+
+    /** The mounted USB drives' mount points joined: changes when a drive is plugged in or out. */
+    std::string MountSignature();
 
     /**
      * Makes the game see the drives' files (see the file comment): the ROM,
@@ -175,6 +214,24 @@ private:
     /** Fills the game file fields of @p drive. */
     void InspectDrive(UsbDrive *drive);
 
+    /** The entries of the folder @p path on a drive, read directly or with root; sorted by name. */
+    std::vector<ModEntry> ListDriveFolder(const std::string &path, bool readable);
+
+    /**
+     * Reads the file at @p path (on a drive), refusing more than @p maxBytes:
+     * directly, or, when the app cannot read the drive, from a copy root makes
+     * in @p tempDir (removed afterwards).
+     */
+    bool ReadDriveFile(const std::string &path, bool readable, std::uint64_t maxBytes, const std::string &tempDir,
+                       std::vector<unsigned char> *out);
+
+    /**
+     * Looks for the ROM in the drives' RetroArch "roms" folders (see the file
+     * comment) and copies it to @p storage's ROM path.
+     * @return True if a ROM was copied.
+     */
+    bool ImportRetroArchRom(const Storage &storage, const std::vector<UsbDrive> &drives);
+
     /** Size of the file at @p path, read directly or with root; 0 when it is missing. */
     std::uint64_t SizeOf(const std::string &path, bool readable);
 
@@ -189,6 +246,11 @@ private:
     Source sources_[2] = { Source::None, Source::None };
     std::string paths_[2];
     std::vector<std::string> modDrives_;
+    std::string romImportedFrom_;
+    std::thread searchThread_;
+    std::mutex searchMutex_;              ///< Guards starting searchThread_.
+    std::atomic<bool> searching_{ false };
+    std::atomic<bool> stopSearch_{ false };
     /** Serialises PlaceContent() and ReleaseLink() (launch, and the page's threads). */
     std::recursive_mutex placeMutex_;
 };

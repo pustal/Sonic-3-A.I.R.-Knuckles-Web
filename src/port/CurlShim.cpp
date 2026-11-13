@@ -15,6 +15,8 @@
 #define CURL_DISABLE_TYPECHECK
 #include <curl/curl.h>
 
+#include "Log.h"
+
 #include <dlfcn.h>
 
 #include <cstdarg>
@@ -53,7 +55,7 @@ const RealCurl &Real()
                 break;
         }
         if (!library) {
-            std::printf("[S3AIR/webOS] libcurl not found: downloads are unavailable\n");
+            s3w::Log::Printf("libcurl not found: downloads are unavailable");
             return;
         }
         real.init    = reinterpret_cast<EasyInitFn>(dlsym(library, "curl_easy_init"));
@@ -61,7 +63,7 @@ const RealCurl &Real()
         real.perform = reinterpret_cast<EasyPerformFn>(dlsym(library, "curl_easy_perform"));
         real.cleanup = reinterpret_cast<EasyCleanupFn>(dlsym(library, "curl_easy_cleanup"));
         if (!real.Loaded())
-            std::printf("[S3AIR/webOS] libcurl is incomplete: downloads are unavailable\n");
+            s3w::Log::Printf("libcurl is incomplete: downloads are unavailable");
     });
     return real;
 }

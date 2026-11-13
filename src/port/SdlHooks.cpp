@@ -7,6 +7,7 @@
  */
 #include "SdlHooks.h"
 
+#include "Log.h"
 #include "MenuOverlay.h"
 #include "RemoteInput.h"
 
@@ -18,6 +19,8 @@ void __real_SDL_GL_SwapWindow(SDL_Window *window);
 SDL_AudioDeviceID __real_SDL_OpenAudioDevice(const char *device, int iscapture, const SDL_AudioSpec *desired,
                                              SDL_AudioSpec *obtained, int allowed_changes);
 SDL_Window *__real_SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint32 flags);
+int __real_SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *buttonid);
+int __real_SDL_ShowSimpleMessageBox(Uint32 flags, const char *title, const char *message, SDL_Window *window);
 }
 
 namespace s3w
@@ -126,6 +129,12 @@ int __wrap_SDL_PollEvent(SDL_Event *event)
 
 void __wrap_SDL_GL_SwapWindow(SDL_Window *window)
 {
+    // Start-up progress for the log: the game has drawn its first frame.
+    static bool firstFrame = true;
+    if (firstFrame) {
+        firstFrame = false;
+        s3w::Log::Printf("the game drew its first frame");
+    }
     s3w::MenuOverlay::OnSwap(window, &__real_SDL_GL_SwapWindow);
     __real_SDL_GL_SwapWindow(window);
 }
@@ -134,6 +143,7 @@ SDL_AudioDeviceID __wrap_SDL_OpenAudioDevice(const char *device, int iscapture, 
                                              SDL_AudioSpec *obtained, int allowed_changes)
 {
     const SDL_AudioDeviceID id = __real_SDL_OpenAudioDevice(device, iscapture, desired, obtained, allowed_changes);
+    s3w::Log::Printf("audio device: %s", id != 0 ? "open" : SDL_GetError());
     if (id != 0 && !iscapture)
         s3w::MenuOverlay::SetAudioDevice(id);
     return id;
@@ -145,7 +155,35 @@ SDL_Window *__wrap_SDL_CreateWindow(const char *title, int x, int y, int w, int 
     // A TV has one screen and no window frame: always the whole panel.
     flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
-    return __real_SDL_CreateWindow(title, x, y, w, h, flags);
+    SDL_Window *window = __real_SDL_CreateWindow(title, x, y, w, h, flags);
+    s3w::Log::Printf("window \"%s\" %dx%d (flags 0x%x): %s", title ? title : "", w, h, static_cast<unsigned>(flags),
+                     window ? "created" : SDL_GetError());
+    return window;
+}
+
+int __wrap_SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *buttonid)
+{
+    // The game reports errors in message boxes: keep them in the port's log too.
+    s3w::Log::Printf("message box \"%s\": %s", data && data->title ? data->title : "", data && data->message ? data->message : "");
+#if defined(S3W_TARGET_WEBOS)
+    // No dialogs on the TV: the game takes the failure as "Cancel", as on any platform without message boxes.
+    (void)buttonid;
+    return SDL_SetError("No message boxes on webOS");
+#else
+    return __real_SDL_ShowMessageBox(data, buttonid);
+#endif
+}
+
+int __wrap_SDL_ShowSimpleMessageBox(Uint32 flags, const char *title, const char *message, SDL_Window *window)
+{
+    s3w::Log::Printf("message box \"%s\": %s", title ? title : "", message ? message : "");
+#if defined(S3W_TARGET_WEBOS)
+    (void)flags;
+    (void)window;
+    return SDL_SetError("No message boxes on webOS");
+#else
+    return __real_SDL_ShowSimpleMessageBox(flags, title, message, window);
+#endif
 }
 
 } // extern "C"
