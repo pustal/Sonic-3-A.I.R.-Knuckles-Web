@@ -46,7 +46,7 @@ if(NOT EXISTS "${AIR_ROOT}/Oxygen/sonic3air/source/sonic3air/main.cpp")
     message(FATAL_ERROR "Missing ${AIR_ROOT}. Run: git submodule update --init")
 endif()
 set(AIR_GAME_DIR "${AIR_ROOT}/Oxygen/sonic3air")
-# librmx, lemonscript and the Oxygen engine are built from a patched copy (AIR_SRC): see the file and patches/.
+# librmx, lemonscript, the Oxygen engine and the game's code are built from a patched copy (AIR_SRC): see the file and patches/.
 include(PatchUpstream)
 
 find_package(Threads REQUIRED)
@@ -102,7 +102,7 @@ set(AIR_INCLUDE_DIRS
     "${AIR_SRC}/librmx/source"
     "${AIR_SRC}/Oxygen/lemonscript/source"
     "${AIR_SRC}/Oxygen/oxygenengine/source"
-    "${AIR_GAME_DIR}/source"
+    "${AIR_SRC}/Oxygen/sonic3air/source"
     "${AIR_GAME_DIR}/source/external")
 
 # Each library below gets these include directories and warning settings.
@@ -167,16 +167,19 @@ target_link_libraries(air_oxygen PUBLIC air_minizip air_rmxmedia air_rmxext_oggv
 
 # Sonic 3 A.I.R. itself. Its main() becomes s3air_main(), which src/main.cpp
 # calls once the ROM is in place.
-file(GLOB_RECURSE AIR_GAME_SOURCES "${AIR_GAME_DIR}/source/sonic3air/*.cpp")
+file(GLOB_RECURSE AIR_GAME_SOURCES "${AIR_SRC}/Oxygen/sonic3air/source/sonic3air/*.cpp")
 s3w_air_library(air_game ${AIR_GAME_SOURCES})
-target_precompile_headers(air_game PRIVATE "${AIR_GAME_DIR}/source/sonic3air/pch.h")
-set_source_files_properties("${AIR_GAME_DIR}/source/sonic3air/main.cpp" PROPERTIES
+target_precompile_headers(air_game PRIVATE "${AIR_SRC}/Oxygen/sonic3air/source/sonic3air/pch.h")
+set_source_files_properties("${AIR_SRC}/Oxygen/sonic3air/source/sonic3air/main.cpp" PROPERTIES
     COMPILE_DEFINITIONS "main=s3air_main"
     SKIP_PRECOMPILE_HEADERS ON)
 target_link_libraries(air_game PUBLIC air_oxygen)
+# "Check for updates" asks for this port's GitHub releases (patches/0003,
+# src/port/PortUpdateCheck.cpp) instead of Eukaryot's official builds.
+target_compile_definitions(air_game PRIVATE S3W_PORT_UPDATE_CHECK)
 
 # The game's version, for the transfer page and the menu.
-file(STRINGS "${AIR_GAME_DIR}/source/sonic3air/version.inc" _s3w_build_string REGEX "BUILD_STRING")
+file(STRINGS "${AIR_SRC}/Oxygen/sonic3air/source/sonic3air/version.inc" _s3w_build_string REGEX "BUILD_STRING")
 string(REGEX REPLACE ".*\"([^\"]+)\".*" "\\1" S3W_AIR_VERSION "${_s3w_build_string}")
 message(STATUS "Sonic 3 A.I.R. ${S3W_AIR_VERSION}")
 
@@ -223,6 +226,7 @@ set(S3W_PORT_SOURCES
     src/port/Log.cpp
     src/port/MenuOverlay.cpp
     src/port/NetInfo.cpp
+    src/port/PortUpdateCheck.cpp
     src/port/RemoteInput.cpp
     src/port/SaveBackup.cpp
     src/port/SdlHooks.cpp

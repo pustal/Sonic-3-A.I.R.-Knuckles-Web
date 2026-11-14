@@ -75,6 +75,14 @@ std::atomic<bool> g_openRequested{ false };
 std::atomic<bool> g_open{ false };
 std::atomic<bool> g_restart{ false };
 std::atomic<SDL_AudioDeviceID> g_audioDevice{ 0 };
+std::mutex g_noticeMutex;
+std::string g_notice; ///< Guarded by g_noticeMutex; shown at the top of the menu.
+
+std::string CurrentNotice()
+{
+    std::lock_guard<std::mutex> lock(g_noticeMutex);
+    return g_notice;
+}
 Uint32 g_firstSwapAt = 0;
 
 OverlayInfo FetchInfo()
@@ -487,6 +495,11 @@ void DrawMenu(Painter &painter, const OverlayInfo &info, int selected)
             y += kLine;
         }
     };
+    const std::string notice = CurrentNotice();
+    if (!notice.empty()) {
+        line(notice, kTitle);
+        y += 3;
+    }
     if (info.address.empty()) {
         line("Transfer page: connect the TV to a network.", kWarning);
     }
@@ -610,6 +623,15 @@ void SetInfoProvider(std::function<OverlayInfo()> provider)
 
 void RequestOpen() { g_openRequested.store(true); }
 
+void ShowNotice(const std::string &text)
+{
+    {
+        std::lock_guard<std::mutex> lock(g_noticeMutex);
+        g_notice = text;
+    }
+    RequestOpen();
+}
+
 bool IsOpen() { return g_open.load(); }
 
 void SetAudioDevice(SDL_AudioDeviceID device) { g_audioDevice.store(device); }
@@ -653,6 +675,10 @@ void OnSwap(SDL_Window *window, void (*swap)(SDL_Window *))
             g_firstSwapAt = 1; // the hint has done its job once the menu was found
             const Choice choice = RunMenu(window, swap, width, height);
             g_open.store(false);
+            {
+                std::lock_guard<std::mutex> lock(g_noticeMutex);
+                g_notice.clear();
+            }
             if (wasPlaying)
                 SDL_PauseAudioDevice(audio, 0);
 

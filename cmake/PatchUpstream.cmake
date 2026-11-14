@@ -6,6 +6,7 @@
 #   <build>/air-src/librmx/source
 #   <build>/air-src/Oxygen/lemonscript/source
 #   <build>/air-src/Oxygen/oxygenengine/source
+#   <build>/air-src/Oxygen/sonic3air/source/sonic3air   (the game's own code)
 # are copied from external/sonic3air, then every patches/*.patch is applied in
 # name order (GNU patch, -p1, from the repository root of the game). Files
 # whose content did not change keep their timestamps, so reconfiguring does not
@@ -17,7 +18,8 @@ find_program(S3W_PATCH_PROGRAM patch REQUIRED)
 
 set(AIR_SRC "${CMAKE_CURRENT_BINARY_DIR}/air-src")
 set(_s3w_staging "${CMAKE_CURRENT_BINARY_DIR}/air-src-staging")
-set(_s3w_patched_trees "librmx/source" "Oxygen/lemonscript/source" "Oxygen/oxygenengine/source")
+set(_s3w_patched_trees "librmx/source" "Oxygen/lemonscript/source" "Oxygen/oxygenengine/source"
+                       "Oxygen/sonic3air/source/sonic3air")
 file(GLOB _s3w_patches "${S3W_ROOT}/patches/*.patch")
 list(SORT _s3w_patches)
 

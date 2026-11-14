@@ -48,6 +48,13 @@ void SetInfoProvider(std::function<OverlayInfo()> provider);
 /** Asks for the menu to open at the next buffer swap (thread-safe). */
 void RequestOpen();
 
+/**
+ * Opens the menu with @p text shown at its top (the game's "Open download
+ * page" uses it, as the TV has no browser to open). The text goes when the
+ * menu closes. Thread-safe.
+ */
+void ShowNotice(const std::string &text);
+
 /** Whether the menu is open (the game is paused). */
 bool IsOpen();
 

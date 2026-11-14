@@ -1,0 +1,162 @@
+Sonic 3 A.I.R. on webOS TVs: "Check for updates" looks for this port's releases
+
+The game's own update check asks Eukaryot's server whether a newer official
+build exists for the platform, and "Open download page" opens that page in a
+browser. Neither makes sense on a TV: the official downloads do not run
+there, the TV has no browser the game can open, and updates for this app come
+from this project's GitHub releases (which the Homebrew Channel installs).
+
+With S3W_PORT_UPDATE_CHECK defined (CMakeLists.txt sets it for air_game):
+- UpdateCheck asks the port (src/port/PortUpdateCheck.cpp) instead of the
+  server: startUpdateCheck() starts its check, performUpdate() polls it, and
+  the server's feature list no longer turns the check off.
+- The options entry shows the app's version and the latest release's.
+- "Open download page" shows the release page's address and a pointer to the
+  Homebrew Channel in the port's own menu.
+Without the define the game is unchanged.
+
+diff -ruN a/Oxygen/sonic3air/source/sonic3air/client/UpdateCheck.cpp b/Oxygen/sonic3air/source/sonic3air/client/UpdateCheck.cpp
+--- a/Oxygen/sonic3air/source/sonic3air/client/UpdateCheck.cpp	2026-11-14 04:51:50.850727086 +0000
++++ b/Oxygen/sonic3air/source/sonic3air/client/UpdateCheck.cpp	2026-11-14 04:52:17.580358790 +0000
+@@ -16,6 +16,17 @@
+ 
+ #include "oxygen/network/EngineServerClient.h"
+ 
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// The webOS port's update check (src/port/PortUpdateCheck.h in Sonic-3-A.I.R.-Knuckles-Web)
++	extern "C" {
++		void s3w_update_check_start(void);
++		int s3w_update_check_poll(int* hasUpdate);
++		const char* s3w_update_check_current_version(void);
++		const char* s3w_update_check_latest_version(void);
++		void s3w_update_check_show_page(void);
++	}
++#endif
++
+ 
+ namespace
+ {
+@@ -77,6 +88,13 @@
+ 
+ void UpdateCheck::startUpdateCheck()
+ {
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// The port asks GitHub for its own releases instead; "performUpdate" polls it
++	s3w_update_check_start();
++	mUpdateRequested = false;
++	mState = State::WAITING_FOR_RESPONSE;
++	return;
++#endif
+ 	EngineServerClient& engineServerClient = EngineServerClient::instance();
+ 	if (!engineServerClient.isConnected())
+ 	{
+@@ -89,6 +107,23 @@
+ 
+ void UpdateCheck::performUpdate()
+ {
++#if defined(S3W_PORT_UPDATE_CHECK)
++	if (mState == State::WAITING_FOR_RESPONSE)
++	{
++		int portHasUpdate = 0;
++		const int portState = s3w_update_check_poll(&portHasUpdate);
++		if (portState == 2)			// S3W_UPDATE_CHECK_DONE
++		{
++			mAppUpdateCheckRequest.mResponse.mHasUpdate = (portHasUpdate != 0);
++			mState = State::HAS_RESPONSE;
++		}
++		else if (portState == 3)	// S3W_UPDATE_CHECK_FAILED
++		{
++			mState = State::FAILED;
++		}
++	}
++	return;
++#endif
+ 	EngineServerClient& engineServerClient = EngineServerClient::instance();
+ 	if (!engineServerClient.isConnected())
+ 	{
+@@ -164,6 +199,10 @@
+ 
+ void UpdateCheck::evaluateServerFeaturesResponse(const network::GetServerFeaturesRequest::Response& response)
+ {
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// Eukaryot's server does not decide whether the port can check for updates
++	return;
++#endif
+ 	bool supportsUpdate = false;
+ 	for (const network::GetServerFeaturesRequest::Response::Feature& feature : response.mFeatures)
+ 	{
+diff -ruN a/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenu.cpp b/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenu.cpp
+--- a/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenu.cpp	2026-11-14 04:51:50.868986846 +0000
++++ b/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenu.cpp	2026-11-14 04:52:17.582170150 +0000
+@@ -31,6 +31,11 @@
+ #include "oxygen/simulation/GameRecorder.h"
+ #include "oxygen/simulation/Simulation.h"
+ 
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// The webOS port shows its download page in its own menu (src/port/PortUpdateCheck.h)
++	extern "C" void s3w_update_check_show_page(void);
++#endif
++
+ 
+ namespace
+ {
+@@ -687,7 +692,11 @@
+ 							UpdateCheck& updateCheck = GameClient::instance().getUpdateCheck();
+ 							if (updateCheck.hasUpdate())
+ 							{
++							#if defined(S3W_PORT_UPDATE_CHECK)
++								s3w_update_check_show_page();
++							#else
+ 								PlatformFunctions::openURLExternal(updateCheck.getResponse()->mUpdateInfoURL.empty() ? "https://sonic3air.org" : updateCheck.getResponse()->mUpdateInfoURL);
++							#endif
+ 							}
+ 							else
+ 							{
+diff -ruN a/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenuEntries.cpp b/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenuEntries.cpp
+--- a/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenuEntries.cpp	2026-11-14 04:51:50.860963756 +0000
++++ b/Oxygen/sonic3air/source/sonic3air/menu/options/OptionsMenuEntries.cpp	2026-11-14 04:52:17.581216777 +0000
+@@ -22,6 +22,17 @@
+ #include "oxygen/engine/modding/Mod.h"
+ #include "oxygen/download/Downloader.h"
+ 
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// The webOS port's update check (src/port/PortUpdateCheck.h in Sonic-3-A.I.R.-Knuckles-Web)
++	extern "C" {
++		void s3w_update_check_start(void);
++		int s3w_update_check_poll(int* hasUpdate);
++		const char* s3w_update_check_current_version(void);
++		const char* s3w_update_check_latest_version(void);
++		void s3w_update_check_show_page(void);
++	}
++#endif
++
+ 
+ namespace
+ {
+@@ -274,8 +285,14 @@
+ 	int& py = renderContext.mCurrentPosition.y;
+ 	const float alpha = renderContext.mTabAlpha;
+ 
++#if defined(S3W_PORT_UPDATE_CHECK)
++	// The port's own version: its releases are what the check looks for
++	drawer.printText(global::mOxyfontSmall, Recti(baseX - 100, py, 0, 10), "Your App Version:", 4, Color(1.0f, 1.0f, 1.0f, alpha));
++	drawer.printText(global::mOxyfontSmall, Recti(baseX + 100, py, 0, 10), std::string("v") + s3w_update_check_current_version(), 6, Color(0.8f, 1.0f, 0.8f, alpha));
++#else
+ 	drawer.printText(global::mOxyfontSmall, Recti(baseX - 100, py, 0, 10), "Your Game Version:", 4, Color(1.0f, 1.0f, 1.0f, alpha));
+ 	drawer.printText(global::mOxyfontSmall, Recti(baseX + 100, py, 0, 10), "v" BUILD_STRING, 6, Color(0.8f, 1.0f, 0.8f, alpha));
++#endif
+ 	py += 12;
+ 
+ 	UpdateCheck& updateCheck = GameClient::instance().getUpdateCheck();
+@@ -297,7 +314,11 @@
+ 			if (updateCheck.hasUpdate())
+ 			{
+ 				drawer.printText(global::mOxyfontSmall, Recti(baseX - 100, py, 0, 10), "Update available:", 4, Color(1.0f, 1.0f, 1.0f, alpha));
++			#if defined(S3W_PORT_UPDATE_CHECK)
++				drawer.printText(global::mOxyfontSmall, Recti(baseX + 100, py, 0, 10), std::string("v") + s3w_update_check_latest_version(), 6, Color(1.0f, 1.0f, 0.6f, alpha));
++			#else
+ 				drawer.printText(global::mOxyfontSmall, Recti(baseX + 100, py, 0, 10), getVersionString(updateCheck.getResponse()->mAvailableAppVersion), 6, Color(1.0f, 1.0f, 0.6f, alpha));
++			#endif
+ 			}
+ 			else
+ 			{

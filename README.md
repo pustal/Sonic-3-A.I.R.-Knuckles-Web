@@ -52,7 +52,14 @@ These show the app's own screens; none of them contain game graphics.
 ## Install
 
 Download the `.ipk` from the [releases](https://github.com/pustal/Sonic-3-A.I.R.-Knuckles-Web/releases) and
-install it with the Homebrew Channel or `ares-install`. Start **Sonic 3 A.I.R.** on the TV.
+install it with the Homebrew Channel or `ares-install`. Start **Sonic 3 A.I.R.** on the TV. The app is
+also listed in the [pustal/webos-repo](https://github.com/pustal/webos-repo) Homebrew Channel repository,
+which installs it and its updates from the Homebrew Channel itself.
+
+**Options > Check for updates** in the game looks for a newer release of this app (not of the official
+Sonic 3 A.I.R. builds, which do not run on a TV). As the TV has no browser for the game to open,
+**Open download page** shows the releases address in the app's menu, to open on a phone or computer;
+the Homebrew Channel installs the update.
 
 ## First start
 
