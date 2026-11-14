@@ -157,8 +157,8 @@
 
     <section>
       <h2>Trouble?</h2>
-      <p id="crash-line" class="warn hidden">The game closed unexpectedly at the last launch: its logs are the "last launch" ones below.
-        On the TV, press OK to start the game again.</p>
+      <p id="crash-line" class="warn hidden">The game crashed at the last launch: its logs are the "last launch" ones below.
+        The TV starts the game again when OK is pressed, or after 30 seconds.</p>
       <p class="dim">The logs help when reporting a problem.
         This launch: <a id="log-link" href="#" target="_blank" rel="noopener">the game's log</a>,
         <a id="portlog-link" href="#" target="_blank" rel="noopener">the app's start-up log</a>.
@@ -341,7 +341,7 @@ async function refreshStatus() {
   byId('rom-folder').textContent = status.driveFolder;
 
   say(byId('mode-line'), status.mode === 'game' ? 'The game is running on the TV.'
-    : status.crashedLastTime && status.rom.present ? 'The game closed unexpectedly last time: the TV waits for OK to start it (see Trouble? below).'
+    : status.crashedLastTime && status.rom.present ? 'The game crashed last time: the TV starts it on OK, or after 30 seconds (see Trouble? below).'
     : 'The TV is waiting for the ROM: the game starts as soon as it arrives.', status.mode === 'setup' ? 'warn' : 'ok');
   say(byId('space-line'), 'Free space on the TV: ' + humanBytes(status.freeBytes)
     + (status.persistent ? '' : '. Warning: the app could not find its storage, nothing is kept after it closes.'), 'dim');

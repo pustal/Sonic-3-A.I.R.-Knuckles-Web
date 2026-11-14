@@ -33,6 +33,13 @@ std::string Path();
 void InstallCrashHandler();
 
 /**
+ * The file the crash handler creates when the app crashes (a fatal signal), so
+ * the next launch knows the last one crashed. An app the system closes (or one
+ * killed otherwise) leaves no such file.
+ */
+void SetCrashMarkerPath(const std::string &path);
+
+/**
  * Logs one line, printf-style; "[S3AIR/webOS] " and the time since launch are
  * put in front, and a newline is added. Thread-safe; flushed at once, so the
  * file shows how far a start-up got even if the app is killed.

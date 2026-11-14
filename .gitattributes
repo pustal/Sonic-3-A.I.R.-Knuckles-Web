@@ -1,0 +1,2 @@
+# The patches must reach patch(1) byte for byte (the game's sources use CRLF line endings).
+patches/*.patch -text

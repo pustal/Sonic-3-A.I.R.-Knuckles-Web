@@ -1,0 +1,103 @@
+Sonic 3 A.I.R. on 32-bit ARM (webOS TVs): unaligned memory accesses
+
+Casting a byte pointer at an arbitrary offset to uint64*/int64*/double* and
+loading or storing through it compiles to LDRD/STRD/VLDR on 32-bit ARM, which
+fault (SIGBUS) when the address is not 4-byte aligned. The game crashed this
+way on the TV while saving its compiled scripts (VectorBinarySerializer, in
+LemonScriptProgram::loadBaseScriptFromSource). The Vita build already avoids
+it with memcpy in two of these places; this does the same on every platform
+(compilers turn these memcpy calls into single loads/stores where unaligned
+access is allowed, so desktop builds are unaffected):
+ - rmxbase/memory/UnalignedMemory.h: readMemoryUnaligned()
+ - rmxbase/memory/VectorBinarySerializer.cpp: writing primitive values
+ - lemon/runtime/Runtime.cpp: initial values of global variables
+ - oxygen_netcore WebSocketWrapper.cpp: 64-bit payload lengths
+
+Applied to a copy in the build folder by cmake/PatchUpstream.cmake.
+
+diff -ruN a/Oxygen/lemonscript/source/lemon/runtime/Runtime.cpp b/Oxygen/lemonscript/source/lemon/runtime/Runtime.cpp
+--- a/Oxygen/lemonscript/source/lemon/runtime/Runtime.cpp	2026-11-13 13:57:24.993084611 +0000
++++ b/Oxygen/lemonscript/source/lemon/runtime/Runtime.cpp	2026-11-13 13:57:52.409535769 +0000
+@@ -962,7 +962,7 @@
+ 				if (variable.getStaticMemorySize() > 0)
+ 				{
+ 					const int64 value = variable.mInitialValue.get<int64>();
+-					*(int64*)&mStaticMemory[variable.getStaticMemoryOffset()] = value;
++					std::memcpy(&mStaticMemory[variable.getStaticMemoryOffset()], &value, sizeof(value));	// May be unaligned (faults on 32-bit ARM as a cast)
+ 				}
+ 			}
+ 		}
+diff -ruN a/Oxygen/oxygenengine/source/oxygen_netcore/network/internal/WebSocketWrapper.cpp b/Oxygen/oxygenengine/source/oxygen_netcore/network/internal/WebSocketWrapper.cpp
+--- a/Oxygen/oxygenengine/source/oxygen_netcore/network/internal/WebSocketWrapper.cpp	2026-11-13 13:57:25.003531034 +0000
++++ b/Oxygen/oxygenengine/source/oxygen_netcore/network/internal/WebSocketWrapper.cpp	2026-11-13 13:57:52.410538757 +0000
+@@ -101,7 +101,9 @@
+ 		}
+ 		else
+ 		{
+-			payloadLength = swapBytes64(*(uint64*)&data[offset]);
++			uint64 rawLength;
++			std::memcpy(&rawLength, &data[offset], sizeof(rawLength));	// Unaligned (faults on 32-bit ARM as a cast)
++			payloadLength = swapBytes64(rawLength);
+ 			offset += 8;
+ 			// TODO: Limit length to some reasonable value
+ 		}
+@@ -143,7 +145,8 @@
+ 	else
+ 	{
+ 		headerContent[1] += 127;
+-		*(uint64*)&headerContent[2] = (uint64)data.size();
++		const uint64 rawLength = (uint64)data.size();
++		std::memcpy(&headerContent[2], &rawLength, sizeof(rawLength));	// Unaligned (faults on 32-bit ARM as a cast)
+ 		headerSize += 8;
+ 	}
+ 
+diff -ruN a/librmx/source/rmxbase/memory/UnalignedMemory.h b/librmx/source/rmxbase/memory/UnalignedMemory.h
+--- a/librmx/source/rmxbase/memory/UnalignedMemory.h	2026-11-13 13:57:24.974804647 +0000
++++ b/librmx/source/rmxbase/memory/UnalignedMemory.h	2026-11-13 13:57:52.408201439 +0000
+@@ -11,6 +11,8 @@
+ 
+ #include "rmxbase/base/Types.h"
+ 
++#include <cstring>
++
+ #if defined(PLATFORM_VITA)
+ 	#include <psp2/kernel/clib.h>
+ #endif
+@@ -19,11 +21,13 @@
+ namespace rmx
+ {
+ #if !defined(__vita__)
++	// memcpy instead of a dereference: 32-bit ARM faults on unaligned 64-bit and floating point loads
++	// (the compiler turns this into a single load wherever unaligned loads are allowed)
+ 	template<typename T>
+-	T readMemoryUnaligned(const void* pointer) { return *(T*)pointer; }
++	T readMemoryUnaligned(const void* pointer) { T value; std::memcpy(&value, pointer, sizeof(T)); return value; }
+ 
+ 	template<typename T>
+-	T readMemoryUnalignedSwapped(const void* pointer) { return swapBytes<T>(*(T*)pointer); }
++	T readMemoryUnalignedSwapped(const void* pointer) { return swapBytes<T>(readMemoryUnaligned<T>(pointer)); }
+ #else
+ 	template<typename T>
+ 	T readMemoryUnaligned(const void* pointer)
+diff -ruN a/librmx/source/rmxbase/memory/VectorBinarySerializer.cpp b/librmx/source/rmxbase/memory/VectorBinarySerializer.cpp
+--- a/librmx/source/rmxbase/memory/VectorBinarySerializer.cpp	2026-11-13 13:57:24.983446619 +0000
++++ b/librmx/source/rmxbase/memory/VectorBinarySerializer.cpp	2026-11-13 13:57:52.408865982 +0000
+@@ -8,6 +8,8 @@
+ 
+ #include "rmxbase.h"
+ 
++#include <cstring>
++
+ #if defined(PLATFORM_VITA)
+ 	#include <psp2/kernel/clib.h>
+ #endif
+@@ -31,7 +33,8 @@
+ 			const size_t oldSize = buffer.size();
+ 			buffer.resize(oldSize + sizeof(T));
+ 		#if !defined(PLATFORM_VITA)
+-			*(T*)&buffer[oldSize] = value;
++			// memcpy instead of a cast: 32-bit ARM faults on unaligned 64-bit and floating point stores
++			std::memcpy(&buffer[oldSize], &value, sizeof(T));
+ 		#else
+ 			// Use memcpy to avoid issues with unaligned memory access
+ 			sceClibMemcpy(&buffer[oldSize], &value, sizeof(T));

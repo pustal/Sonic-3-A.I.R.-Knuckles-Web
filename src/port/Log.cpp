@@ -5,6 +5,7 @@
 #include "Log.h"
 
 #include <execinfo.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -27,6 +28,8 @@ std::FILE *g_file = nullptr;
 std::string g_path;
 /** The log file's descriptor, for the crash handler (which may not use stdio). */
 volatile sig_atomic_t g_crashFd = -1;
+/** Where the crash handler leaves its marker (fixed storage: the handler may not allocate). */
+std::array<char, 1024> g_crashMarker{};
 
 /** Writes @p text to the crash descriptor (async-signal-safe). */
 void CrashWrite(const char *text)
@@ -60,6 +63,14 @@ void OnFatalSignal(int signal)
         backtrace_symbols_fd(frames.data(), count, g_crashFd);
     if (g_crashFd >= 0)
         fsync(g_crashFd);
+    if (g_crashMarker[0] != '\0') {
+        const int marker = open(g_crashMarker.data(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (marker >= 0) {
+            const char *name = SignalName(signal);
+            (void)!write(marker, name, std::strlen(name));
+            close(marker);
+        }
+    }
     ::signal(signal, SIG_DFL);
     raise(signal);
 }
@@ -75,6 +86,12 @@ void Open(const std::string &path)
     g_file    = std::fopen(path.c_str(), "w");
     g_path    = g_file ? path : std::string();
     g_crashFd = g_file ? fileno(g_file) : -1;
+}
+
+void SetCrashMarkerPath(const std::string &path)
+{
+    if (path.size() < g_crashMarker.size())
+        std::memcpy(g_crashMarker.data(), path.c_str(), path.size() + 1);
 }
 
 void InstallCrashHandler()

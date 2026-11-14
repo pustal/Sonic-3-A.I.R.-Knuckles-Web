@@ -28,6 +28,8 @@ constexpr int kCanvasHeight = 270;
 constexpr int kLine         = 12;
 constexpr std::uint32_t kInfoRefreshMs = 3000;
 constexpr std::uint32_t kStartDelayMs  = 1200;
+/** After a crash, the screen starts the game on its own after this long. */
+constexpr std::uint32_t kAfterCrashWaitMs = 30000;
 /** The USB drives are checked this often for one plugged in meanwhile. */
 constexpr std::uint32_t kUsbRefreshMs = 3000;
 constexpr std::uint32_t kFrameDelayMs  = 33;
@@ -52,6 +54,7 @@ struct ScreenState {
     std::vector<std::string> usbLines;
     TransferStatus transfer;
     bool searching = false; ///< A RetroArch folder search is running.
+    std::uint32_t autoStartAt = 0; ///< After a crash: when the game starts without OK (SDL ticks).
     bool starting = false;
 };
 
@@ -107,7 +110,7 @@ void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenSt
     }
 
     if (reason == SetupReason::AfterCrash) {
-        text.DrawTextCentered(center, y, "The game closed unexpectedly last time.", 1, kWarning);
+        text.DrawTextCentered(center, y, "The game crashed last time.", 1, kWarning);
         y += kLine;
         text.DrawTextCentered(center, y, "Its logs are on the transfer page, under Trouble?:", 1, kText);
         y += kLine * 2;
@@ -117,7 +120,9 @@ void DrawScreen(SDL_Renderer *renderer, const TextRenderer &text, const ScreenSt
             text.DrawTextCentered(center, y, "PIN  " + server->Pin(), 2, kTitle);
             y += 30;
         }
-        text.DrawTextCentered(center, y, "Press OK to start the game, BACK to exit.", 1, kText);
+        const std::uint32_t now  = SDL_GetTicks();
+        const std::uint32_t left = SDL_TICKS_PASSED(now, state.autoStartAt) ? 0 : (state.autoStartAt - now + 999) / 1000;
+        text.DrawTextCentered(center, y, "Starting in " + std::to_string(left) + " s.  OK: start now   BACK: exit", 1, kText);
         SDL_RenderPresent(renderer);
         return;
     }
@@ -217,6 +222,7 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
     std::string knownDrives       = usb.MountSignature(); // main.cpp has looked at these already
     SetupResult result            = SetupResult::Exit;
     bool running                  = true;
+    state.autoStartAt             = SDL_GetTicks() + kAfterCrashWaitMs;
 
     while (running) {
         SDL_Event event;
@@ -255,7 +261,8 @@ SetupResult RunSetupScreen(const Storage &storage, UsbAccess &usb, const Transfe
             }
             nextUsbCheck = now + kUsbRefreshMs;
         }
-        if (reason == SetupReason::MissingRom && !state.starting && Storage::FileSize(storage.RomPath()) == Storage::kRomBytes) {
+        const bool autoStart = reason == SetupReason::AfterCrash && SDL_TICKS_PASSED(now, state.autoStartAt);
+        if (!state.starting && (autoStart || (reason == SetupReason::MissingRom && Storage::FileSize(storage.RomPath()) == Storage::kRomBytes))) {
             state.starting = true;
             startAt        = now + kStartDelayMs;
         }

@@ -33,6 +33,9 @@ namespace
 /** Logical canvas: divides 1080p and 2160p panels by whole numbers so the 8x8 font stays crisp. */
 constexpr int kCanvasWidth  = 480;
 constexpr int kCanvasHeight = 270;
+/** The start-up hint uses a canvas twice as fine (half-size letters), so a long address fits on one line. */
+constexpr int kHintCanvasWidth  = 960;
+constexpr int kHintCanvasHeight = 540;
 /** The start-up hint shows for this long after the game's first frame. */
 constexpr Uint32 kHintMs = 15000;
 /** The menu asks for fresh information this often while open. */
@@ -221,14 +224,18 @@ public:
         return true;
     }
 
-    /** Starts a frame of size @p width x @p height pixels; the state must have been saved. */
-    void Begin(int width, int height)
+    /**
+     * Starts a frame of size @p width x @p height pixels, drawing on a canvas
+     * of @p canvasWidth x @p canvasHeight units scaled by a whole number to
+     * fit; the state must have been saved.
+     */
+    void Begin(int width, int height, int canvasWidth = kCanvasWidth, int canvasHeight = kCanvasHeight)
     {
         width_  = width;
         height_ = height;
-        scale_  = std::max(1, std::min(width / kCanvasWidth, height / kCanvasHeight));
-        originX_ = (width - kCanvasWidth * scale_) / 2;
-        originY_ = (height - kCanvasHeight * scale_) / 2;
+        scale_  = std::max(1, std::min(width / canvasWidth, height / canvasHeight));
+        originX_ = (width - canvasWidth * scale_) / 2;
+        originY_ = (height - canvasHeight * scale_) / 2;
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, width, height);
@@ -419,12 +426,13 @@ Painter &ThePainter()
 
 void DrawHint(Painter &painter, const OverlayInfo &info)
 {
+    // Drawn on the finer hint canvas (see Begin in OnSwap).
     const std::string where = info.address.empty() ? std::string("Transfer page: connect the TV to a network")
-                                                   : "Transfer page: " + info.address + "  PIN " + info.pin;
-    const std::string line  = "BACK: menu   " + where;
-    const int width         = std::min(kCanvasWidth - 8, Painter::Width(line, 1) + 12);
-    painter.FillRect((kCanvasWidth - width) / 2, kCanvasHeight - 22, width, 14, kPanel);
-    painter.TextCentered(kCanvasWidth / 2, kCanvasHeight - 19, line, 1, kText);
+                                                   : "Transfer page " + info.address + "  PIN " + info.pin;
+    const std::string line  = "BACK: menu    " + where;
+    const int width         = std::min(kHintCanvasWidth - 16, Painter::Width(line, 1) + 16);
+    painter.FillRect((kHintCanvasWidth - width) / 2, kHintCanvasHeight - 40, width, 16, kPanel);
+    painter.TextCentered(kHintCanvasWidth / 2, kHintCanvasHeight - 36, line, 1, kText);
 }
 
 /** Splits @p text into lines of at most @p maxChars characters, at spaces where possible. */
@@ -665,7 +673,7 @@ void OnSwap(SDL_Window *window, void (*swap)(SDL_Window *))
                 hintInfo   = FetchInfo();
                 hintInfoAt = now == 0 ? 1 : now;
             }
-            painter.Begin(width, height);
+            painter.Begin(width, height, kHintCanvasWidth, kHintCanvasHeight);
             DrawHint(painter, hintInfo);
         }
     }

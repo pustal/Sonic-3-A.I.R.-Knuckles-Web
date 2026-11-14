@@ -8,7 +8,8 @@
  *
  * When the game ended unexpectedly at the last launch, the same screen
  * explains that the logs of that launch are on the transfer page, and starts
- * the game only when the player presses OK, so the page stays reachable.
+ * the game when the player presses OK, or after 30 seconds, so the page
+ * stays reachable meanwhile.
  */
 #ifndef S3W_SETUP_SCREEN_H
 #define S3W_SETUP_SCREEN_H
@@ -30,7 +31,7 @@ enum class SetupResult {
 /** Why the setup screen is shown. */
 enum class SetupReason {
     MissingRom,  ///< No ROM yet: wait for one.
-    AfterCrash,  ///< The game ended unexpectedly last time: offer its logs, start on OK.
+    AfterCrash,  ///< The app crashed last time: offer its logs, start on OK or after a countdown.
 };
 
 /**

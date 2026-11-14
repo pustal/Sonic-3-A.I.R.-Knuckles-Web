@@ -31,7 +31,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <system_error>
 #include <string>
 #include <vector>
@@ -104,17 +103,21 @@ int main(int argc, char **argv)
     storage.CreateFolders();
     setenv("XDG_DATA_HOME", storage.Root().c_str(), 1);
 
-    // The last launch's logs are kept (the transfer page offers them). If the
-    // game was still marked as running, that launch ended in a crash.
-    const bool crashedLastTime = Storage::FileSize(storage.GameRunningMarkerPath()) > 0;
+    // The last launch's logs are kept (the transfer page offers them). The
+    // crash handler's marker says whether that launch crashed; it is reported
+    // once, at this launch. (A file from older versions is removed too.)
+    const bool crashedLastTime = Storage::FileSize(storage.CrashMarkerPath()) > 0;
     std::error_code renameError;
+    std::filesystem::remove(storage.CrashMarkerPath(), renameError);
+    std::filesystem::remove(storage.PathFor("game-running"), renameError);
     std::filesystem::rename(storage.PortLogPath(false), storage.PortLogPath(true), renameError);
     std::filesystem::rename(storage.GameLogPath(false), storage.GameLogPath(true), renameError);
     Log::Open(storage.PortLogPath(false));
+    Log::SetCrashMarkerPath(storage.CrashMarkerPath());
     Log::InstallCrashHandler();
     Log::Printf("data folder: %s%s", storage.Root().c_str(), storage.Persistent() ? "" : " (temporary)");
     if (crashedLastTime)
-        Log::Printf("the game did not end normally at the last launch");
+        Log::Printf("the last launch crashed");
 
     // 2. Saves restored from the transfer page while the game was running.
     storage.ApplyPendingBackup();
@@ -145,7 +148,7 @@ int main(int argc, char **argv)
             return setup == SetupResult::Exit ? 0 : 1;
         }
     }
-    // The game ended unexpectedly last time: wait for OK, so its logs can be fetched first.
+    // The game crashed last time: hold on a screen (OK, or a countdown, starts the game), so its logs can be fetched first.
     else if (crashedLastTime) {
         server.SetSetupMode(true);
         const SetupResult setup = RunSetupScreen(storage, usb, server.Port() != 0 ? &server : nullptr, SetupReason::AfterCrash);
@@ -172,10 +175,7 @@ int main(int argc, char **argv)
     if (chdir(storage.GameDir().c_str()) != 0)
         Log::Printf("could not enter %s", storage.GameDir().c_str());
     Log::Printf("starting the game");
-    // Marks the game as running until it returns: still there at the next launch means a crash.
-    std::ofstream(storage.GameRunningMarkerPath()) << "running\n";
     const int result = s3air_main(1, gameArgs.data());
-    std::filesystem::remove(storage.GameRunningMarkerPath(), renameError);
     Log::Printf("the game ended (%d)", result);
 
     server.Stop();

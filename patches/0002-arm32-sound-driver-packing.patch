@@ -1,0 +1,33 @@
+Sonic 3 A.I.R. on 32-bit ARM (webOS TVs): an unclosed #pragma pack(1)
+
+In SoundDriver.cpp the class Internal opens "#pragma pack(1)" for its
+zTrack struct and never closes it, so every member declared after it
+(registers, counters, the std::vector of sound chip writes) is packed at
+byte offsets. On 32-bit ARM the vector's members are then read with LDM
+from an unaligned address, which faults (SIGBUS): the game crashed on the TV
+right after the SEGA logo, as the sound driver started
+(Internal::zWriteFMIorII -> writeFMI -> vectorAdd). zTrack stays packed
+(it overlays the emulated Z80 RAM); the packing now ends after it.
+
+Applied to a copy in the build folder by cmake/PatchUpstream.cmake.
+
+diff -ruN a/Oxygen/oxygenengine/source/oxygen/simulation/sound/SoundDriver.cpp b/Oxygen/oxygenengine/source/oxygen/simulation/sound/SoundDriver.cpp
+--- a/Oxygen/oxygenengine/source/oxygen/simulation/sound/SoundDriver.cpp	2026-11-14 04:23:48.269315852 +0000
++++ b/Oxygen/oxygenengine/source/oxygen/simulation/sound/SoundDriver.cpp	2026-11-14 04:23:48.287179258 +0000
+@@ -3482,7 +3482,7 @@
+ 	}
+ 
+ private:
+-	#pragma pack(1)
++	#pragma pack(push, 1)
+ 	struct zTrack
+ 	{
+ 		// Playback control bits:
+@@ -3574,6 +3574,7 @@
+ 		uint8 VoicesHigh;			// S&K: 2Bh		; High byte of pointer to track's voices, used only if zUpdatingSFX is set
+ 		uint32 Stack_top;			// S&K: 2Ch-2Fh	; Track stack; can be used by LoopCounters
+ 	};
++	#pragma pack(pop)	// Only zTrack is packed: everything after it (the registers, std::vector members) needs its natural alignment
+ 
+ private:
+ 	uint8 mRegisters[0x20] = { 0 };

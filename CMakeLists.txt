@@ -46,6 +46,8 @@ if(NOT EXISTS "${AIR_ROOT}/Oxygen/sonic3air/source/sonic3air/main.cpp")
     message(FATAL_ERROR "Missing ${AIR_ROOT}. Run: git submodule update --init")
 endif()
 set(AIR_GAME_DIR "${AIR_ROOT}/Oxygen/sonic3air")
+# librmx, lemonscript and the Oxygen engine are built from a patched copy (AIR_SRC): see the file and patches/.
+include(PatchUpstream)
 
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -97,9 +99,9 @@ set(AIR_INCLUDE_DIRS
     "${AIR_ROOT}/framework/external/zlib/zlib/contrib/minizip"
     # The curl API header only: libcurl itself is loaded at run time (src/port/CurlShim.cpp).
     "${AIR_ROOT}/framework/external/curl/curl/include"
-    "${AIR_ROOT}/librmx/source"
-    "${AIR_ROOT}/Oxygen/lemonscript/source"
-    "${AIR_ROOT}/Oxygen/oxygenengine/source"
+    "${AIR_SRC}/librmx/source"
+    "${AIR_SRC}/Oxygen/lemonscript/source"
+    "${AIR_SRC}/Oxygen/oxygenengine/source"
     "${AIR_GAME_DIR}/source"
     "${AIR_GAME_DIR}/source/external")
 
@@ -128,35 +130,35 @@ target_link_libraries(air_minizip PUBLIC ZLIB::ZLIB)
 target_compile_definitions(air_minizip PRIVATE _LARGEFILE64_SOURCE)
 
 # rmxbase
-file(GLOB_RECURSE AIR_RMXBASE_SOURCES "${AIR_ROOT}/librmx/source/rmxbase/*.cpp")
+file(GLOB_RECURSE AIR_RMXBASE_SOURCES "${AIR_SRC}/librmx/source/rmxbase/*.cpp")
 s3w_air_library(air_rmxbase ${AIR_RMXBASE_SOURCES})
-target_precompile_headers(air_rmxbase PRIVATE "${AIR_ROOT}/librmx/source/rmxbase.h")
+target_precompile_headers(air_rmxbase PRIVATE "${AIR_SRC}/librmx/source/rmxbase.h")
 target_link_libraries(air_rmxbase PUBLIC ZLIB::ZLIB)
 
 # rmxmedia (GLEW is not used with OpenGL ES, and needs X11: left out)
-file(GLOB_RECURSE AIR_RMXMEDIA_SOURCES "${AIR_ROOT}/librmx/source/rmxmedia/*.cpp")
+file(GLOB_RECURSE AIR_RMXMEDIA_SOURCES "${AIR_SRC}/librmx/source/rmxmedia/*.cpp")
 s3w_air_library(air_rmxmedia ${AIR_RMXMEDIA_SOURCES})
 target_link_libraries(air_rmxmedia PUBLIC air_rmxbase SDL2::SDL2 "${S3W_GLESV2}")
 
 # rmxext_oggvorbis
-file(GLOB AIR_RMXEXT_OGGVORBIS_SOURCES "${AIR_ROOT}/librmx/source/rmxext_oggvorbis/*.cpp")
+file(GLOB AIR_RMXEXT_OGGVORBIS_SOURCES "${AIR_SRC}/librmx/source/rmxext_oggvorbis/*.cpp")
 s3w_air_library(air_rmxext_oggvorbis ${AIR_RMXEXT_OGGVORBIS_SOURCES})
 target_link_libraries(air_rmxext_oggvorbis PUBLIC air_rmxmedia air_oggvorbis)
 
 # lemonscript
-file(GLOB_RECURSE AIR_LEMONSCRIPT_SOURCES "${AIR_ROOT}/Oxygen/lemonscript/source/lemon/*.cpp")
+file(GLOB_RECURSE AIR_LEMONSCRIPT_SOURCES "${AIR_SRC}/Oxygen/lemonscript/source/lemon/*.cpp")
 s3w_air_library(air_lemonscript ${AIR_LEMONSCRIPT_SOURCES})
-target_precompile_headers(air_lemonscript PRIVATE "${AIR_ROOT}/Oxygen/lemonscript/source/lemon/pch.h")
+target_precompile_headers(air_lemonscript PRIVATE "${AIR_SRC}/Oxygen/lemonscript/source/lemon/pch.h")
 target_link_libraries(air_lemonscript PUBLIC air_rmxbase)
 
 # oxygen_netcore
-file(GLOB_RECURSE AIR_NETCORE_SOURCES "${AIR_ROOT}/Oxygen/oxygenengine/source/oxygen_netcore/*.cpp")
+file(GLOB_RECURSE AIR_NETCORE_SOURCES "${AIR_SRC}/Oxygen/oxygenengine/source/oxygen_netcore/*.cpp")
 s3w_air_library(air_netcore ${AIR_NETCORE_SOURCES})
-target_precompile_headers(air_netcore PRIVATE "${AIR_ROOT}/Oxygen/oxygenengine/source/oxygen_netcore/pch.h")
+target_precompile_headers(air_netcore PRIVATE "${AIR_SRC}/Oxygen/oxygenengine/source/oxygen_netcore/pch.h")
 target_link_libraries(air_netcore PUBLIC air_rmxbase)
 
 # oxygen
-file(GLOB_RECURSE AIR_OXYGEN_SOURCES "${AIR_ROOT}/Oxygen/oxygenengine/source/oxygen/*.cpp")
+file(GLOB_RECURSE AIR_OXYGEN_SOURCES "${AIR_SRC}/Oxygen/oxygenengine/source/oxygen/*.cpp")
 s3w_air_library(air_oxygen ${AIR_OXYGEN_SOURCES})
 # GL_MIN/GL_MAX for the OpenGL drawer's blend modes (see the header).
 target_compile_options(air_oxygen PRIVATE "SHELL:-include \"${S3W_ROOT}/src/port/GlesCompat.h\"")

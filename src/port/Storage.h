@@ -102,8 +102,8 @@ public:
     /** The game's log (Sonic3AIR/logfile.txt), or the last launch's (logfile-previous.txt) when @p previous. */
     std::string GameLogPath(bool previous) const { return AppDataDir() + (previous ? "/logfile-previous.txt" : "/logfile.txt"); }
 
-    /** A file that exists while the game runs: still there at a launch means the last one crashed. */
-    std::string GameRunningMarkerPath() const { return PathFor("game-running"); }
+    /** A file the crash handler leaves (Log::SetCrashMarkerPath): there at a launch means the last one crashed. */
+    std::string CrashMarkerPath() const { return PathFor("last-crash"); }
 
     /** Where a save backup received while the game runs is kept until the next launch. */
     std::string PendingBackupPath() const;
