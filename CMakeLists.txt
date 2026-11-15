@@ -14,7 +14,7 @@
 # screen and the menu are tested without a TV.
 
 cmake_minimum_required(VERSION 3.21)
-project(Sonic3AIRWebOS VERSION 1.0.0 LANGUAGES C CXX)
+project(Sonic3AIRWebOS VERSION 1.0.1 LANGUAGES C CXX)
 
 set(S3W_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${S3W_ROOT}/cmake")

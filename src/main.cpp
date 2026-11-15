@@ -118,6 +118,10 @@ int main(int argc, char **argv)
     Log::Printf("data folder: %s%s", storage.Root().c_str(), storage.Persistent() ? "" : " (temporary)");
     if (crashedLastTime)
         Log::Printf("the last launch crashed");
+    // Core dumps of crashes before 1.0.1 (the game's working folder is where the kernel wrote them).
+    const unsigned long long coreBytes = Log::RemoveCoreDumps(storage.GameDir()) + Log::RemoveCoreDumps(storage.Root());
+    if (coreBytes > 0)
+        Log::Printf("removed old crash dumps (%s)", HumanBytes(coreBytes).c_str());
 
     // 2. Saves restored from the transfer page while the game was running.
     storage.ApplyPendingBackup();
