@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/images/logo.png" alt="Sonic 3 A.I.R. for webOS" width="160"></p>
 
-# Sonic-3-A.I.R.-Knuckles-Web
+# Sonic 3 - Angel Island Revisited for WebOS
 
 **Version 1.0.1** · [Sonic 3 - Angel Island Revisited](https://sonic3air.org) (Sonic 3 A.I.R.), Eukaryot's
 fan remaster of Sonic 3 & Knuckles, built from [its source code](https://github.com/Eukaryot/sonic3air) as a
