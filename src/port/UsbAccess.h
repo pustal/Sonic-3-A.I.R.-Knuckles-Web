@@ -10,6 +10,12 @@
  * luna://org.webosbrew.hbchannel.service/exec accepts the app's calls (rooted
  * TVs; newer firmwares may refuse calls from apps).
  *
+ * The jail: homebrew apps run chrooted in /var/palm/jail/<app id>, a private
+ * view of the file system where /tmp/usb (the drives) does not exist, while
+ * root commands (the Homebrew Channel) run outside it. So the app cannot
+ * reach a drive itself, and a bind mount root makes must be made at the
+ * jail's copy of the path (RootPath()) for the app to see it.
+ *
  * A drive keeps the game's files in its "Sonic 3 AIR" folder:
  *   Sonic 3 AIR/<rom>.bin or .md             the ROM (Sonic_Knuckles_wSonic3.bin
  *                                            first; else any 4 MB ROM file there)
@@ -180,6 +186,14 @@ public:
      */
     std::string MoveWithRoot(const std::string &sourcePath, const std::string &destination);
 
+    /**
+     * The path root commands must use for @p appPath (a path as the app sees
+     * it) when the result has to be visible to the app: the same path, or its
+     * copy in the app's jail ("/var/palm/jail/<id>" + @p appPath) when the app
+     * runs chrooted there. Found once, by asking root where this process' root is.
+     */
+    std::string RootPath(const std::string &appPath);
+
     /** Removes the file at @p path, directly or with root. @return True if it is gone. */
     bool RemoveFile(const std::string &path);
 
@@ -243,6 +257,8 @@ private:
 
     mutable std::mutex mutex_;
     RootStatus root_;
+    std::string jailRoot_;      ///< This process' root as root sees it ("/" when not jailed); see RootPath().
+    bool jailRootKnown_ = false;
     Source sources_[2] = { Source::None, Source::None };
     std::string paths_[2];
     std::vector<std::string> modDrives_;

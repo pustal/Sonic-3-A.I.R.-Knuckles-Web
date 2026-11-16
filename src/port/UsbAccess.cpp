@@ -738,11 +738,13 @@ Source UsbAccess::LinkFile(const std::string &source, const std::string &local, 
     }
     if (!Root().Available())
         return Source::None;
-    // Root binds the file over an empty one, so the app can open it by that name.
+    // Root binds the file over an empty one, so the app can open it by that name;
+    // at the jail's copy of the path, where the chrooted app sees it (RootPath()).
     std::ofstream(local).close();
-    if (RunAsRoot("mount --bind " + ShellQuote(source) + " " + ShellQuote(local)) && Storage::FileSize(local) > 0)
+    const std::string target = RootPath(local);
+    if (RunAsRoot("mount --bind " + ShellQuote(source) + " " + ShellQuote(target)) && Storage::FileSize(local) > 0)
         return Source::UsbMount;
-    RunAsRoot("umount " + ShellQuote(local));
+    RunAsRoot("umount " + ShellQuote(target));
     fs::remove(local, ec);
     Log::Printf("could not make %s readable to the app", source.c_str());
     return Source::None;
@@ -755,7 +757,7 @@ void UsbAccess::ReleaseLink(const Storage &storage, GameFile file)
     std::error_code ec;
     if (IsMountedAt(local)) {
         // Lazy: detaches it even while the game reads through it.
-        RunAsRoot("umount -l " + ShellQuote(local));
+        RunAsRoot("umount -l " + ShellQuote(RootPath(local)));
         fs::remove(local, ec); // the empty file it covered
     }
     else if (fs::is_symlink(local, ec)) {
@@ -782,7 +784,7 @@ void UsbAccess::ReleaseModLinks(const Storage &storage)
     for (const fs::path &link : links) {
         const std::string path = link.string();
         if (IsMountedAt(path)) {
-            RunAsRoot("umount -l " + ShellQuote(path));
+            RunAsRoot("umount -l " + ShellQuote(RootPath(path)));
             fs::remove(link, ec); // the empty folder it covered
         }
         else if (fs::is_symlink(link, ec)) {
@@ -846,9 +848,11 @@ void UsbAccess::PlaceContent(const Storage &storage)
         }
         else if (Root().Available()) {
             fs::create_directories(local, ec);
-            done = RunAsRoot("mount --bind " + ShellQuote(source) + " " + ShellQuote(local)) && CanRead(local);
+            // Made at the jail's copy of the folder: the app, chrooted there, sees it at "local".
+            const std::string target = RootPath(local);
+            done = RunAsRoot("mount --bind " + ShellQuote(source) + " " + ShellQuote(target)) && CanRead(local);
             if (!done) {
-                RunAsRoot("umount " + ShellQuote(local));
+                RunAsRoot("umount " + ShellQuote(target));
                 fs::remove(local, ec);
             }
         }
@@ -899,6 +903,30 @@ std::string UsbAccess::MoveWithRoot(const std::string &sourcePath, const std::st
     if (RunAsRoot("mkdir -p " + ShellQuote(dir) + " && mv -f " + ShellQuote(sourcePath) + " " + ShellQuote(destination)))
         return {};
     return "Root could not move the file onto the drive.";
+}
+
+std::string UsbAccess::RootPath(const std::string &appPath)
+{
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (jailRootKnown_)
+            return jailRoot_ == "/" ? appPath : jailRoot_ + appPath;
+    }
+    // Where this process' "/" is, seen from outside: the jail's folder, or "/".
+    std::string root = "/";
+    std::string output;
+    if (Root().Available() && RunAsRoot("readlink /proc/" + std::to_string(static_cast<long>(getpid())) + "/root", &output)) {
+        output.erase(std::remove(output.begin(), output.end(), '\n'), output.end());
+        if (!output.empty() && output.front() == '/')
+            root = output;
+    }
+    while (root.size() > 1 && root.back() == '/')
+        root.pop_back();
+    std::lock_guard<std::mutex> lock(mutex_);
+    jailRoot_      = root;
+    jailRootKnown_ = true;
+    Log::Printf("the app's root, seen by root: %s", root.c_str());
+    return root == "/" ? appPath : root + appPath;
 }
 
 bool UsbAccess::RemoveFile(const std::string &path)

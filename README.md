@@ -2,7 +2,7 @@
 
 # Sonic 3 - Angel Island Revisited for WebOS
 
-**Version 1.0.1** · [Sonic 3 - Angel Island Revisited](https://sonic3air.org) (Sonic 3 A.I.R.), Eukaryot's
+**Version 1.0.2** · [Sonic 3 - Angel Island Revisited](https://sonic3air.org) (Sonic 3 A.I.R.), Eukaryot's
 fan remaster of Sonic 3 & Knuckles, built from [its source code](https://github.com/Eukaryot/sonic3air) as a
 **native** app for LG webOS TVs (SDL2, OpenGL ES 2), with a few TV-friendly extras:
 
